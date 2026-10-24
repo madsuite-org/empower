@@ -109,7 +109,7 @@ static double t_start;
 static void step(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void step(const char *fmt, ...) {
     va_list ap;
-    printf("[%9.3f s] ", now() - t_start);
+    printf("  %8.3fs  ", now() - t_start);
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
@@ -188,7 +188,8 @@ static int run(char *const args[]) {
 
 /* Download url to path with curl. Returns 0 on success. */
 static int download(const char *url, const char *path) {
-    char *c[] = {"curl", "-fsSL", "-o", (char *)path, (char *)url, NULL};
+    /* -s without -S: a failed download gets opfsolve's own message, not curl's. */
+    char *c[] = {"curl", "-fsL", "-o", (char *)path, (char *)url, NULL};
     int rc = run(c);
     if (rc == -1) die("curl is needed to download %s", url);
     return rc;
@@ -364,11 +365,22 @@ static Bool eval_h(int n, double *x, Bool nx, double sigma, int m, double *y, Bo
     if (!v) return M->hess_structure(M->id, ir, jc) == 0;
     TIMED(M, nhev, thev, M->hess(M->id, x, y, sigma, v));
 }
+static int verbose = 0;
+
+/* Unless --verbose, opfsolve prints its own compact iteration table; Ipopt's full
+ * output goes to ipopt.log. */
 static Bool on_iter(int alg, int iter, double f, double pr, double du, double mu, double d,
                     double reg, double adu, double apr, int ls, void *u) {
-    (void)alg; (void)f; (void)pr; (void)du; (void)mu; (void)d; (void)reg; (void)adu;
-    (void)apr; (void)ls;
+    (void)d; (void)reg; (void)ls;
     ((Model *)u)->iters = iter;
+    if (!verbose) {
+        if (iter == 0)
+            printf("              %5s  %15s  %9s  %9s  %6s  %9s  %9s\n", "iter", "objective",
+                   "inf_pr", "inf_du", "lg(mu)", "alpha_du", "alpha_pr");
+        printf("              %4d%c  %15.8e  %9.2e  %9.2e  %6.1f  %9.2e  %9.2e\n", iter,
+               alg ? 'r' : ' ', f, pr, du, mu > 0 ? log10(mu) : -INFINITY, adu, apr);
+        fflush(stdout);
+    }
     return 1;
 }
 
@@ -695,16 +707,15 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     Model M = {0};
     load_model(&M, C->hm, C->model);
 
-    step("parsing %s and building the %s-form model", casefile, C->form);
+    step("parsing the case and building the %s-form model", C->form);
     double t0 = now();
     M.id = M.new_str(casefile);
     r->t_build = now() - t0;
     if (M.id <= 0) return case_error("the model library could not build a model from %s", casefile);
     int n = r->n = M.nvar(M.id), m = r->m = M.ncon(M.id);
     int nnzj = M.nnzj(M.id), nnzh = M.nnzh(M.id);
-    step("model built (%.3f s): %d variables, %d constraints, %d Jacobian and %d Hessian "
-         "nonzeros",
-         r->t_build, n, m, nnzj, nnzh);
+    step("model: %d variables, %d constraints, %d + %d Jacobian/Hessian nonzeros (%.3f s)", n,
+         m, nnzj, nnzh, r->t_build);
 
     double *x = xmalloc(n * sizeof *x), *xl = xmalloc(n * sizeof *x), *xu = xmalloc(n * sizeof *x);
     double *gl = xmalloc(m * sizeof *x), *gu = xmalloc(m * sizeof *x), *g = xmalloc(m * sizeof *x);
@@ -719,7 +730,6 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         if (gu[i] > 1e20) gu[i] = 1e20;
     }
 
-    step("setting up Ipopt");
     Ipopt *I = &C->I;
     void *P = I->create(n, xl, xu, m, gl, gu, nnzj, nnzh, 1, eval_f, eval_g, eval_grad, eval_jac,
                         eval_h);
@@ -729,6 +739,10 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     I->out_file(P, path, 5);
     if (C->hsllib) I->str_opt(P, "hsllib", C->hsllib);
     I->str_opt(P, "linear_solver", C->linear_solver);
+    if (!verbose) {
+        I->int_opt(P, "print_level", 0);   /* the console; ipopt.log keeps level 5 */
+        I->str_opt(P, "sb", "yes");
+    }
     for (int k = 0; k < nopts; k++) {
         char key[512];
         const char *eq = strchr(opts[k], '=');
@@ -743,25 +757,23 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
             ok = (*v && !*end) ? I->num_opt(P, key, dv) : I->str_opt(P, key, v);
         }
         if (!ok) die("Ipopt rejected option %s", opts[k]);
-        step("Ipopt option %s = %s", key, v);
     }
 
-    step("solving with Ipopt (log also written to %s)", path);
-    printf("\n");
+    step("solving with Ipopt, %s", C->linear_solver);
+    if (verbose) printf("\n");
     fflush(stdout);
     t0 = now();
     r->status = I->solve(P, x, g, &r->obj, y, zl, zu, &M);
     r->t_solve = now() - t0;
     fflush(stdout);
-    printf("\n");
+    if (verbose) printf("\n");
     r->iters = M.iters;
     r->t_cb = M.tfev + M.tgev + M.tconsev + M.tjev + M.thev;
-    step("Ipopt finished (%.3f s, %d iterations): %s, objective %.10g", r->t_solve, r->iters,
-         status_name(r->status), r->obj);
-    step("time in model callbacks %.3f s, in Ipopt %.3f s", r->t_cb, r->t_solve - r->t_cb);
+    step("%s: objective %.10g, %d iterations, %.3f s (%.3f s in model callbacks)",
+         termination_status(r->status), r->obj, r->iters, r->t_solve, r->t_cb);
 
     snprintf(path, sizeof path, "%s/solution.json", out);
-    step("writing %s", path);
+    step("wrote %s/{solution.json, ipopt.log}", out);
     r->t_total = now() - t_case;
     write_solution(path, casefile, C, &M, r, x, y);
 
@@ -954,6 +966,20 @@ static int probe_ma27(Ipopt *I, const char *hsllib) {
     return status == 0;
 }
 
+/* The SOURCE note the installer leaves next to what it installed, or "". */
+static const char *read_source(const char *kind, char *buf, size_t cap) {
+    char path[8192];
+    *buf = 0;
+    if (!*root) return NULL;
+    snprintf(path, sizeof path, "%s/%s/SOURCE", root, kind);
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    if (!fgets(buf, (int)cap, f)) *buf = 0;
+    fclose(f);
+    buf[strcspn(buf, "\r\n")] = 0;
+    return *buf ? buf : NULL;
+}
+
 /* Record the machine and the libraries of a run in <output>/system.txt. */
 static void write_system(const char *out, const char *ipoptlib, const char *hsllib, int argc,
                          char **argv) {
@@ -996,14 +1022,8 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     const char *libs[2][2] = {{"ipopt", ipoptlib}, {"hsl", hsllib}};
     for (int k = 0; k < 2; k++) {
         fprintf(f, "%s library: %s\n", libs[k][0], libs[k][1] ? libs[k][1] : "(none)");
-        if (!libs[k][1] || !*root) continue;
-        snprintf(path, sizeof path, "%s/%s/SOURCE", root, libs[k][0]);
-        FILE *src = fopen(path, "r");
-        if (src && fgets(buf, sizeof buf, src)) {
-            buf[strcspn(buf, "\n")] = 0;
+        if (libs[k][1] && read_source(libs[k][0], buf, sizeof buf))
             fprintf(f, "%s: %s\n", libs[k][0], buf);
-        }
-        if (src) fclose(src);
     }
     fprintf(f, "command:");
     for (int i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
@@ -1035,6 +1055,7 @@ static const char *usage =
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
     "               $OPFSOLVE_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
+    "  --verbose    print Ipopt's full output (it always goes to <case>/ipopt.log)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
     "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv;\n"
@@ -1059,6 +1080,7 @@ int main(int argc, char **argv) {
                *hsllib = getenv("OPFSOLVE_HSL_LIB"),
                *form = "polar", *solver = "ipopt", *out = "opfsolve-results", *v;
     List args = {0};
+    int check_hsl = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -1069,6 +1091,8 @@ int main(int argc, char **argv) {
             puts("opfsolve " VERSION);
             return 0;
         }
+        if (!strcmp(a, "--check-hsl")) { check_hsl = 1; continue; }
+        if (!strcmp(a, "--verbose")) { verbose = 1; continue; }
         if ((v = flag(a, "--form", &i, argc, argv))) form = v;
         else if ((v = flag(a, "--solver", &i, argc, argv))) solver = v;
         else if ((v = flag(a, "--options", &i, argc, argv))) parse_options(v);
@@ -1079,7 +1103,7 @@ int main(int argc, char **argv) {
         else if (a[0] == '-') { fputs(usage, stderr); die("unknown option %s", a); }
         else push(&args, a);
     }
-    if (!args.n) { fputs(usage, stderr); die("no case given"); }
+    if (!args.n && !check_hsl) { fputs(usage, stderr); die("no case given"); }
     Ctx C = {0};
     C.form = form;
     if (!strcmp(form, "polar")) C.model = "acp";
@@ -1095,11 +1119,15 @@ int main(int argc, char **argv) {
     if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);
     C.hsllib = hsllib;
 
-    printf("opfsolve %s\n  form:          %s\n  solver:        %s\n  model library: %s\n"
-           "  Ipopt library: %s\n  output:        %s\n",
-           VERSION, form, solver, modellib, ipoptlib, out);
-    printf("  HSL library:   %s\n", hsllib ? hsllib : "(none)");
-    for (int k = 0; k < nopts; k++) printf("  option:        %s\n", opts[k]);
+    char src[512];
+    printf("opfsolve %s, %s form, Ipopt\n", VERSION, form);
+    printf("  model    %s\n", modellib);
+    printf("  ipopt    %s\n", ipoptlib);
+    if (read_source("ipopt", src, sizeof src)) printf("           %s\n", src);
+    printf("  hsl      %s\n", hsllib ? hsllib : "(none)");
+    if (hsllib && read_source("hsl", src, sizeof src)) printf("           %s\n", src);
+    printf("  output   %s\n", out);
+    for (int k = 0; k < nopts; k++) printf("  option   %s\n", opts[k]);
 
     List cases = {0};
     for (int i = 0; i < args.n; i++) {
@@ -1136,11 +1164,13 @@ int main(int argc, char **argv) {
 #endif
 
     /* Loading the model library starts its bundled Julia runtime. */
-    step("loading model library");
     double t0 = now();
-    C.hm = lib_open(modellib);
-    if (!C.hm) die("cannot load model library %s: %s", modellib, lib_error());
-    step("model library loaded (%.3f s)", now() - t0);
+    if (!check_hsl) {
+        step("loading model library");
+        C.hm = lib_open(modellib);
+        if (!C.hm) die("cannot load model library %s: %s", modellib, lib_error());
+        step("model library loaded (%.3f s)", now() - t0);
+    }
 
     step("loading Ipopt");
     t0 = now();
@@ -1155,6 +1185,12 @@ int main(int argc, char **argv) {
     C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
     C.I.intermediate = lib_sym(hi, "SetIntermediateCallback");
     step("Ipopt loaded (%.3f s)", now() - t0);
+    if (check_hsl) {
+        /* For the installer: does Ipopt solve with MA27 from this HSL library? */
+        int ok = probe_ma27(&C.I, C.hsllib);
+        printf("MA27 %s\n", ok ? "works" : "does not work");
+        return ok ? 0 : 1;
+    }
     /* Whether MA27 works depends on the Ipopt build and on the HSL library, if
      * any, which Ipopt only loads at solve time. So ask Ipopt: solve min x^2
      * with MA27. */
@@ -1187,18 +1223,37 @@ int main(int argc, char **argv) {
               C.summary);
 
     int solved = 0, failed = 0;
+    Result *res = xcalloc(cases.n, sizeof *res);
+    int *ok = xcalloc(cases.n, sizeof *ok);
+    char **names = xcalloc(cases.n, sizeof *names);
     for (int i = 0; i < cases.n; i++) {
-        printf("\n");
-        step("case %d/%d: %s", i + 1, cases.n, cases.v[i]);
-        char cf[8192];
-        Result r = {0};
-        if (resolve_case(cases.v[i], cf, sizeof cf) != 0 || solve_case(&C, cf, out, &r) != 0)
-            failed++;
-        else
-            solved++;
+        char cf[8192], nm[1024];
+        printf("\n[%d/%d] %s\n", i + 1, cases.n, cases.v[i]);
+        fflush(stdout);
+        int st = resolve_case(cases.v[i], cf, sizeof cf);
+        case_name(st == 0 ? cf : cases.v[i], nm, sizeof nm);
+        names[i] = strdup(nm);
+        if (st == 0 && solve_case(&C, cf, out, &res[i]) == 0) { ok[i] = 1; solved++; }
+        else failed++;
     }
     fclose(C.summary);
-    printf("\n");
-    step("done: %d solved, %d not solved; summary in %s", solved, failed, path);
+
+    /* The runs at a glance; the full table is summary.csv. */
+    int w = 4;
+    for (int i = 0; i < cases.n; i++)
+        if ((int)strlen(names[i]) > w) w = (int)strlen(names[i]);
+    printf("\nSummary (%s)\n", path);
+    printf("  %-*s  %-14s  %14s  %5s  %8s  %8s\n", w, "case", "status", "objective", "iter",
+           "build", "solve");
+    for (int i = 0; i < cases.n; i++) {
+        Result *r = &res[i];
+        if (r->n == 0) {   /* never reached the solver */
+            printf("  %-*s  %s\n", w, names[i], "not solved (see the error above)");
+            continue;
+        }
+        printf("  %-*s  %-14s  %14.8g  %5d  %7.3fs  %7.3fs\n", w, names[i],
+               termination_status(r->status), r->obj, r->iters, r->t_build, r->t_solve);
+    }
+    printf("  %d solved, %d not solved, %.1f s in total\n", solved, failed, now() - t_start);
     return failed ? 1 : 0;
 }

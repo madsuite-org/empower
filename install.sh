@@ -26,7 +26,8 @@
 #
 # Environment (same as the options): OPFSOLVE_DIR, OPFSOLVE_HSL, OPFSOLVE_HSL_LIB;
 # also OPFSOLVE_VERSION (release tag, default latest), OPFSOLVE_ARCHIVE (a local
-# release archive), and OPFSOLVE_SKIP_HSL=1 (install without HSL, for testing only).
+# release archive), OPFSOLVE_FC (the Fortran compiler to try first; default gfortran
+# on PATH), and OPFSOLVE_SKIP_HSL=1 (install without HSL, for testing only).
 set -eu
 
 REPO="madsuite-org/opfsolve"
@@ -36,8 +37,11 @@ IPOPT_SPEC="ipopt=3.14.20"
 MAMBA_VERSION="2.9.0-0"
 MA27_URL="https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 
-say() { printf '==> %s\n' "$*"; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# Bold section headings and highlighted errors on a terminal; plain text otherwise.
+if [ -t 1 ]; then B=$(printf '\033[1m'); R=$(printf '\033[0m'); E=$(printf '\033[1;31m'); else B=""; R=""; E=""; fi
+say() { printf '    %s\n' "$*"; }
+section() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
+die() { printf '\n%serror:%s %s\n' "$E" "$R" "$*" >&2; exit 1; }
 
 usage() { sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed '$d; s/^# \{0,1\}//' || echo "see https://github.com/$REPO"; }
 
@@ -67,13 +71,14 @@ have_tty=0
 (: < /dev/tty) 2>/dev/null && have_tty=1
 ask() {   # question default -> answer
     [ $have_tty -eq 1 ] || { echo "$2"; return; }
-    printf '%s ' "$1" > /dev/tty
+    printf '    %s ' "$1" > /dev/tty
     read -r ans < /dev/tty || ans=""
     echo "${ans:-$2}"
 }
 
 command -v curl >/dev/null || die "curl is required"
-get() { curl -fSL --progress-bar -o "$2" "$1"; }   # get URL FILE ("-" for stdout)
+# get URL FILE ("-" for stdout); a progress bar only on a terminal.
+if [ -t 2 ]; then get() { curl -fSL --progress-bar -o "$2" "$1"; }; else get() { curl -fsSL -o "$2" "$1"; }; fi
 command -v tar >/dev/null || die "tar is required"
 
 
@@ -94,22 +99,37 @@ case "$os" in
         plat="macos-$arch"; cplat=osx-arm64; ext=dylib ;;
     *) die "unsupported OS: $os (on Windows, use install.ps1)" ;;
 esac
-say "platform: $plat"
-say "install directory: $DIR"
-say "add $DIR/bin to PATH in shell startup files: $add_to_path"
+printf '%sopfsolve installer%s\n' "$B" "$R"
+say "platform:      $plat"
+say "install into:  $DIR"
+say "add to PATH:   $add_to_path ($DIR/bin, in the shell startup files)"
 if [ $yes -eq 0 ]; then
     [ $have_tty -eq 1 ] || die "unable to ask for confirmation; run with -y to accept the defaults (--help for options)"
-    case "$(ask '==> proceed? [Y/n]' y)" in
+    case "$(ask 'proceed? [Y/n]' y)" in
         y | Y | yes | Yes | YES) ;;
         *) die "cancelled" ;;
     esac
 fi
 mkdir -p "$DIR"
+hsl="$DIR/hsl/libhsl.$ext"
 
-# --- opfsolve ----------------------------------------------------------------
+# --- conda-forge tools (micromamba) ------------------------------------------
+MM="$DIR/.mamba/micromamba"
+export MAMBA_ROOT_PREFIX="$DIR/.mamba/root"
+mamba() { "$MM" "$@"; }
+get_mamba() {
+    [ -x "$MM" ] && return 0
+    mkdir -p "$DIR/.mamba"
+    get "https://github.com/mamba-org/micromamba-releases/releases/download/$MAMBA_VERSION/micromamba-$cplat" "$MM" ||
+        die "could not download micromamba"
+    chmod +x "$MM"
+}
+
+# --- 1. opfsolve ------------------------------------------------------------------
+section "[1/5] opfsolve"
 if [ ! -x "$DIR/bin/opfsolve" ]; then
     if [ -n "${OPFSOLVE_ARCHIVE:-}" ]; then
-        say "installing opfsolve from $OPFSOLVE_ARCHIVE"
+        say "from $OPFSOLVE_ARCHIVE"
         tar xzf "$OPFSOLVE_ARCHIVE" -C "$DIR" --strip-components 1
     else
         if [ "$REL" = latest ]; then
@@ -117,60 +137,61 @@ if [ ! -x "$DIR/bin/opfsolve" ]; then
         else
             url="https://github.com/$REPO/releases/download/$REL/opfsolve-$plat.tar.gz"
         fi
-        say "downloading opfsolve ($REL): $url"
-        get "$url" - | tar xz -C "$DIR" --strip-components 1 ||
-            die "no opfsolve release for $plat at $url"
+        say "downloading $url"
+        get "$url" - | tar xz -C "$DIR" --strip-components 1 || die "no opfsolve release for $plat at $url"
     fi
-    say "installed $DIR/bin/opfsolve and the compiled model library $DIR/emp"
-else
-    say "opfsolve already installed: $("$DIR/bin/opfsolve" --version)"
 fi
+say "$("$DIR/bin/opfsolve" --version) and its compiled model library"
 
-# --- conda-forge tools (micromamba) ------------------------------------------
-MM="$DIR/.mamba/micromamba"
-export MAMBA_ROOT_PREFIX="$DIR/.mamba/root"
-mamba() {
-    if [ ! -x "$MM" ]; then
-        murl="https://github.com/mamba-org/micromamba-releases/releases/download/$MAMBA_VERSION/micromamba-$cplat"
-        say "downloading micromamba $MAMBA_VERSION (conda-forge package manager): $murl"
-        mkdir -p "$DIR/.mamba"
-        get "$murl" "$MM" || die "could not download micromamba"
-        chmod +x "$MM"
-    fi
-    "$MM" "$@"
-}
-
-# --- Ipopt from conda-forge --------------------------------------------------
-if [ ! -e "$DIR/ipopt/lib/libipopt.$ext" ]; then
-    say "installing Ipopt from conda-forge ($IPOPT_SPEC, with MUMPS and OpenBLAS)"
-    mamba create -y -q -p "$DIR/ipopt" -c conda-forge --override-channels "$IPOPT_SPEC" >/dev/null ||
-        die "could not install Ipopt from conda-forge"
-    [ -e "$DIR/ipopt/lib/libipopt.$ext" ] || die "libipopt.$ext missing after installing Ipopt"
-    echo "conda-forge $IPOPT_SPEC" > "$DIR/ipopt/SOURCE"
-    say "installed $DIR/ipopt/lib/libipopt.$ext"
-else
-    say "Ipopt already installed: $(cat "$DIR/ipopt/SOURCE" 2>/dev/null || echo "$DIR/ipopt")"
-fi
-
-# --- HSL ----------------------------------------------------------------------
-hsl="$DIR/hsl/libhsl.$ext"
-
+# --- 2. HSL source: asked for first, so its compiler downloads alongside Ipopt ------
 # Compile the user's own HSL package, optimized for this machine. HSL's personal
 # licence permits modifying the software only to optimise its performance for
 # the licensee's use on a particular platform, which is what this does; the
 # result stays on this machine.
-build_hsl() {
-    src=$1
-    work="$DIR/hsl/build"
+hsl_src=""          # a package to build (link or file), if any
+hsl_mode=""         # build | lib | keep | skip
+section "[2/5] HSL MA27 package"
+if [ -n "${OPFSOLVE_HSL_LIB:-}" ]; then
+    hsl_mode=lib; hsl_lib=$OPFSOLVE_HSL_LIB; say "your library $hsl_lib"
+elif [ -n "${OPFSOLVE_HSL:-}" ]; then
+    hsl_mode=build; hsl_src=$OPFSOLVE_HSL
+elif [ -e "$hsl" ]; then
+    hsl_mode=keep; say "already installed"
+elif [ "${OPFSOLVE_SKIP_HSL:-}" = 1 ]; then
+    hsl_mode=skip; say "skipped (OPFSOLVE_SKIP_HSL=1)"
+else
+    say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
+    say "  1. request it at $MA27_URL"
+    say "  2. HSL emails you a download link (valid for 7 days)"
+    link=""
+    if [ $have_tty -eq 1 ]; then
+        # Open the request page for the user; without a desktop (ssh, a server)
+        # the URL above is all there is.
+        if [ "$os" = Darwin ]; then
+            open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
+        elif { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v xdg-open >/dev/null; then
+            xdg-open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
+        fi
+        link=$(ask 'paste the download link (or a path to the package or an HSL library):' "")
+    fi
+    [ -n "$link" ] || die "no HSL download link. Rerun with --hsl='<download link from the email>'"
+    case "$link" in
+        *.so | *.so.* | *.dylib) hsl_mode=lib; hsl_lib=$link ;;
+        *) hsl_mode=build; hsl_src=$link ;;
+    esac
+fi
+
+work="$DIR/hsl/build"
+if [ "$hsl_mode" = build ]; then
     rm -rf "$work"; mkdir -p "$work"; chmod 700 "$DIR/hsl" "$work"
-    case "$src" in
+    case "$hsl_src" in
         http://* | https://*)
             # A download link from HSL's email is a page; the archive is under it.
-            case "$src" in *.tar.gz | *.tgz | *.zip) ;; */) src="${src}package.tar.gz" ;; *) src="$src/package.tar.gz" ;; esac
+            case "$hsl_src" in *.tar.gz | *.tgz | *.zip) ;; */) hsl_src="${hsl_src}package.tar.gz" ;; *) hsl_src="$hsl_src/package.tar.gz" ;; esac
             say "downloading your HSL package"
-            get "$src" "$work/pkg" || die "could not download the HSL package (download links expire after 7 days)"
+            get "$hsl_src" "$work/pkg" || die "could not download the HSL package (download links expire after 7 days)"
             pkg="$work/pkg" ;;
-        *) [ -f "$src" ] || die "HSL package not found: $src"; pkg=$src ;;
+        *) [ -f "$hsl_src" ] || die "HSL package not found: $hsl_src"; pkg=$hsl_src ;;
     esac
     case "$(head -c 2 "$pkg" | od -An -tx1 | tr -d ' \n')" in
         1f8b) tar xzf "$pkg" -C "$work" ;;
@@ -178,80 +199,106 @@ build_hsl() {
         *) die "the HSL package is neither .tar.gz nor .zip (an expired or already used download link returns a web page)" ;;
     esac
     top=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -1)
-    # Coin-HSL builds with meson; the standalone MA27 package needs only gfortran.
-    tools=gfortran
-    [ -f "$top/meson.build" ] && tools="gfortran meson ninja pkg-config"
-    say "installing a Fortran compiler from conda-forge to build HSL ($tools)"
-    mamba create -y -q -p "$work/tools" -c conda-forge --override-channels $tools >/dev/null ||
-        die "could not install the Fortran compiler"
-    fc=$(ls "$work"/tools/bin/*gfortran | head -1)
-    mkdir -p "$DIR/hsl"
-    if [ -f "$top/meson.build" ]; then
-        # Coin-HSL and Coin-HSL Archive.
-        say "building $(basename "$top") with meson, buildtype=release"
-        (cd "$top" && PATH="$work/tools/bin:$PATH" FC="$fc" meson setup build --buildtype=release \
-            --prefix="$work/inst" >"$work/build.log" 2>&1 && PATH="$work/tools/bin:$PATH" meson install -C build >>"$work/build.log" 2>&1) ||
-            die "HSL build failed; see $work/build.log"
-        lib=$(find "$work/inst" -name "libcoinhsl*.$ext" -type f | head -1)
-        [ -n "$lib" ] || die "no libcoinhsl in the HSL build; see $work/build.log"
-        cp "$lib" "$hsl"
-    elif [ -f "$top/src/ma27d.f" ]; then
-        # The standalone MA27 package.
-        say "compiling $(basename "$top") (double precision) with -O3"
-        if [ "$os" = Darwin ]; then shared="-dynamiclib"; else shared="-shared"; fi
-        "$fc" -O3 -fPIC $shared -o "$hsl" "$top/src/ma27d.f" -Wl,-rpath,"$DIR/ipopt/lib" ||
-            die "compiling MA27 failed"
-    else
+    [ -f "$top/meson.build" ] || [ -f "$top/src/ma27d.f" ] ||
         die "unrecognised HSL package: expected the MA27 package (src/ma27d.f) or Coin-HSL (meson.build)"
-    fi
-    echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $("$fc" --version | head -1)" > "$DIR/hsl/SOURCE"
-    rm -rf "$work"
-    # Drop the compiler's packages from micromamba's cache; Ipopt keeps what it uses.
-    mamba clean -a -y -q >/dev/null 2>&1 || true
-    say "installed $hsl"
-}
+    say "package: $(basename "$top")"
 
-if [ -n "${OPFSOLVE_HSL_LIB:-}" ]; then
-    [ -f "$OPFSOLVE_HSL_LIB" ] || die "OPFSOLVE_HSL_LIB not found: $OPFSOLVE_HSL_LIB"
-    mkdir -p "$DIR/hsl"
-    ln -sf "$OPFSOLVE_HSL_LIB" "$hsl"
-    echo "your library $OPFSOLVE_HSL_LIB" > "$DIR/hsl/SOURCE"
-    say "using your HSL library $OPFSOLVE_HSL_LIB"
-elif [ -n "${OPFSOLVE_HSL:-}" ]; then
-    build_hsl "$OPFSOLVE_HSL"
-elif [ -e "$hsl" ]; then
-    say "HSL: $(cat "$DIR/hsl/SOURCE" 2>/dev/null || echo "$hsl")"
-elif [ "${OPFSOLVE_SKIP_HSL:-}" = 1 ]; then
-    say "OPFSOLVE_SKIP_HSL=1: installing without HSL (testing only)"
-else
-    say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
-    say "  1. request it at $MA27_URL"
-    say "  2. HSL emails you a download link (valid for 7 days)"
-    # Under `curl ... | sh`, standard input is the script, so ask on the terminal.
-    link=""
-    if [ $have_tty -eq 1 ]; then
-        # Open the request page for the user; on a machine without a desktop (ssh,
-        # a server) the URL above is all there is.
-        if [ "$os" = Darwin ]; then
-            open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
-        elif { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v xdg-open >/dev/null; then
-            xdg-open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
+    # An existing gfortran first ($OPFSOLVE_FC, or gfortran on PATH; Coin-HSL also
+    # needs meson and ninja); otherwise conda-forge's, downloaded in the background
+    # while Ipopt installs, into its own package cache so the two do not contend.
+    sysfc="${OPFSOLVE_FC:-$(command -v gfortran 2>/dev/null || true)}"
+    use_sys=0
+    if [ -n "$sysfc" ] && "$sysfc" --version >/dev/null 2>&1; then
+        if [ -f "$top/src/ma27d.f" ] || { command -v meson >/dev/null && command -v ninja >/dev/null; }; then
+            use_sys=1
+            say "compiler: $("$sysfc" --version | head -1) (yours)"
         fi
-        printf '==> paste the download link (or a path to the package or an HSL library): ' > /dev/tty
-        read -r link < /dev/tty || link=""
     fi
-    [ -n "$link" ] || die "no HSL download link. Rerun with --hsl='<download link from the email>'"
-    case "$link" in
-        *.so | *.so.* | *.dylib)
-            [ -f "$link" ] || die "HSL library not found: $link"
-            mkdir -p "$DIR/hsl"; ln -sf "$link" "$hsl"
-            echo "your library $link" > "$DIR/hsl/SOURCE"
-            say "using your HSL library $link" ;;
-        *) build_hsl "$link" ;;
-    esac
+    start_tools() {
+        tools=gfortran
+        [ -f "$top/meson.build" ] && tools="gfortran meson ninja pkg-config"
+        get_mamba
+        say "compiler: downloading $tools from conda-forge, alongside Ipopt"
+        ( MAMBA_ROOT_PREFIX="$work/mamba-root" "$MM" create -y -q -p "$work/tools" -c conda-forge \
+            --override-channels $tools >"$work/tools.log" 2>&1; echo $? > "$work/tools.rc" ) &
+        tools_pid=$!
+    }
+    [ $use_sys -eq 1 ] || start_tools
 fi
 
-# --- PATH, the way juliaup does it ---------------------------------------------
+# --- 3. Ipopt from conda-forge -----------------------------------------------------
+section "[3/5] Ipopt"
+if [ ! -e "$DIR/ipopt/lib/libipopt.$ext" ]; then
+    get_mamba
+    say "installing $IPOPT_SPEC from conda-forge"
+    mamba create -y -q -p "$DIR/ipopt" -c conda-forge --override-channels "$IPOPT_SPEC" >/dev/null ||
+        die "could not install Ipopt from conda-forge"
+    [ -e "$DIR/ipopt/lib/libipopt.$ext" ] || die "libipopt.$ext missing after installing Ipopt"
+    echo "conda-forge $IPOPT_SPEC" > "$DIR/ipopt/SOURCE"
+fi
+say "$(cat "$DIR/ipopt/SOURCE" 2>/dev/null): $DIR/ipopt/lib/libipopt.$ext"
+
+# --- HSL: build, link, or keep -------------------------------------------------------
+# compile_hsl FC TOOLS_BIN: build the extracted package in $top into $hsl.
+compile_hsl() {
+    cfc=$1; tbin=$2
+    if [ -f "$top/meson.build" ]; then
+        # Coin-HSL and Coin-HSL Archive.
+        say "building with meson, buildtype=release"
+        rm -rf "$top/build" "$work/inst"
+        (cd "$top" && PATH="${tbin:+$tbin:}$PATH" FC="$cfc" meson setup build --buildtype=release \
+            --prefix="$work/inst" >"$work/build.log" 2>&1 &&
+            PATH="${tbin:+$tbin:}$PATH" meson install -C build >>"$work/build.log" 2>&1) || return 1
+        lib=$(find "$work/inst" -name "libcoinhsl*.$ext" -type f | head -1)
+        [ -n "$lib" ] || return 1
+        cp "$lib" "$hsl"
+    else
+        # The standalone MA27 package.
+        say "compiling MA27 (double precision) with -O3"
+        if [ "$os" = Darwin ]; then shared="-dynamiclib"; else shared="-shared"; fi
+        "$cfc" -O3 -fPIC $shared -o "$hsl" "$top/src/ma27d.f" -Wl,-rpath,"$DIR/ipopt/lib" >"$work/build.log" 2>&1 || return 1
+    fi
+}
+# check_hsl: Ipopt solves a small problem with MA27 from $hsl.
+check_hsl() { "$DIR/bin/opfsolve" --check-hsl --hsl-lib="$hsl" >"$work/check.log" 2>&1; }
+
+case "$hsl_mode" in
+    lib)
+        [ -f "$hsl_lib" ] || die "HSL library not found: $hsl_lib"
+        mkdir -p "$DIR/hsl"; ln -sf "$hsl_lib" "$hsl"
+        echo "your library $hsl_lib" > "$DIR/hsl/SOURCE"
+        mkdir -p "$work"
+        check_hsl || die "Ipopt cannot use MA27 from $hsl_lib"
+        rm -rf "$work"
+        section "[4/5] HSL MA27"; say "your library $hsl_lib (MA27 checked)" ;;
+    build)
+        section "[4/5] HSL MA27"
+        fc=""
+        if [ $use_sys -eq 1 ]; then
+            if compile_hsl "$sysfc" "" && check_hsl; then
+                fc=$sysfc
+            else
+                say "that build did not work with Ipopt; using conda-forge's gfortran instead"
+                rm -f "$hsl"
+                start_tools
+            fi
+        fi
+        if [ -z "$fc" ]; then
+            wait "$tools_pid" 2>/dev/null || true
+            [ "$(cat "$work/tools.rc" 2>/dev/null)" = 0 ] || die "could not install the Fortran compiler; see $work/tools.log"
+            fc=$(ls "$work"/tools/bin/*gfortran | head -1)
+            compile_hsl "$fc" "$work/tools/bin" || die "HSL build failed; see $work/build.log"
+            check_hsl || die "the HSL library built, but Ipopt cannot use its MA27; see $work/check.log"
+        fi
+        echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $("$fc" --version | head -1)" > "$DIR/hsl/SOURCE"
+        rm -rf "$work"
+        say "$hsl (MA27 checked)" ;;
+    keep) section "[4/5] HSL MA27"; say "$(cat "$DIR/hsl/SOURCE" 2>/dev/null): $hsl" ;;
+    skip) ;;
+esac
+
+# --- 4. PATH, the way juliaup does it ----------------------------------------------
+section "[5/5] PATH"
 bindir="$DIR/bin"
 block_begin="# >>> opfsolve initialize >>>"
 block_end="# <<< opfsolve initialize <<<"
@@ -277,22 +324,29 @@ esac
 
 $block_end
 BLOCK
-    say "added $bindir to PATH in $f"
+    say "$bindir added in $f"
 }
 if [ "$add_to_path" = yes ]; then
     write_block "$HOME/.bashrc"
     if [ -f "$HOME/.bash_profile" ]; then write_block "$HOME/.bash_profile"; else write_block "$HOME/.profile"; fi
     case "${SHELL:-}" in */zsh) zsh_user=1 ;; *) zsh_user=0 ;; esac
     { [ -f "$HOME/.zshrc" ] || [ $zsh_user -eq 1 ] || [ "$os" = Darwin ]; } && write_block "$HOME/.zshrc"
+else
+    say "left unchanged (--add-to-path no)"
 fi
 
-say "installed: $("$bindir/opfsolve" --version)"
+# Drop downloaded packages that are no longer needed.
+[ -x "$MM" ] && mamba clean -a -y -q >/dev/null 2>&1 || true
+
+printf '\n%sopfsolve is installed.%s\n' "$B" "$R"
 case ":$PATH:" in
-    *":$bindir:"*) say "run: opfsolve case118_ieee     (opfsolve --help for options)" ;;
+    *":$bindir:"*) say "try:  opfsolve case118_ieee        (opfsolve --help for options)" ;;
     *)
         if [ "$add_to_path" = yes ]; then
-            say "opfsolve is on PATH in new shells. To use it in this one, run:"
+            say "new terminals have opfsolve on PATH. In this one, first run:"
             say "  export PATH=\"$bindir:\$PATH\""
-        fi
-        say "run: $bindir/opfsolve case118_ieee     (opfsolve --help for options)" ;;
+            say "then try:  opfsolve case118_ieee        (opfsolve --help for options)"
+        else
+            say "try:  $bindir/opfsolve case118_ieee"
+        fi ;;
 esac

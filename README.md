@@ -45,6 +45,7 @@ opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE .
 | `--solver` | `ipopt` (default, and the only solver in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The linear solver is `ma27`; with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. |
 | `--output` | Output directory (default `./opfsolve-results`). |
+| `--verbose` | Print Ipopt's full output; by default opfsolve prints a compact iteration table, and the full output goes to `<case>/ipopt.log`. |
 | `--hsl-lib` | HSL library to use (default `~/.opfsolve/hsl`, or `OPFSOLVE_HSL_LIB`). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
@@ -68,7 +69,7 @@ opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ip
 opfsolve requires MA27. Its licence is free for personal use, but `opfsolve` never distributes it, so each user downloads it:
 
 1. Request the free personal licence for MA27 at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/. HSL emails a download link, valid for 7 days.
-2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`OPFSOLVE_HSL` on Windows). The installer downloads the package, installs a Fortran compiler from conda-forge, compiles MA27 with `-O3` on your machine into `opfsolve/hsl/`, and removes the compiler again:
+2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`OPFSOLVE_HSL` on Windows). The installer downloads the package and compiles MA27 with `-O3` into `~/.opfsolve/hsl/`. It uses your `gfortran` if you have one (or the compiler in `OPFSOLVE_FC`); otherwise it downloads gfortran from conda-forge, alongside Ipopt, and removes it afterwards. Either way it checks that Ipopt can use the result:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --hsl='<download link>'
