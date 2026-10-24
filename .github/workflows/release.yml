@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only unless a job asks for more.
+permissions:
+  contents: read
+
+env:
+  # The Julia that compile/Manifest.toml was resolved with.
+  JULIA_VERSION: "1.12.7"
+
 jobs:
   build-linux:
     name: ${{ matrix.plat }}
@@ -15,7 +23,7 @@ jobs:
       matrix:
         include:
           - plat: linux-x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             image: quay.io/pypa/manylinux_2_28_x86_64
           - plat: linux-aarch64
             runner: ubuntu-24.04-arm
@@ -24,17 +32,24 @@ jobs:
     # AlmaLinux 8 (glibc 2.28), so the binary also runs on RHEL 8 and newer distributions.
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install Julia
         run: |
-          curl -fsSL https://install.julialang.org | sh -s -- --yes --default-channel 1.12
+          curl --proto '=https' --tlsv1.2 -fsSL https://install.julialang.org | sh -s -- --yes --default-channel "$JULIA_VERSION"
           echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.julia/packages
+            ~/.julia/artifacts
+            ~/.julia/compiled
+          key: julia-${{ matrix.plat }}-${{ env.JULIA_VERSION }}-${{ hashFiles('compile/Manifest.toml') }}
       - name: Build
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: opfsolve-${{ matrix.plat }}
           path: opfsolve-${{ matrix.plat }}.tar.gz
@@ -49,38 +64,40 @@ jobs:
             runner: macos-14
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2.7.0
         with:
-          version: "1.12"
+          version: ${{ env.JULIA_VERSION }}
+      - uses: julia-actions/cache@d10a6fd8f31b12404a54613ebad242900567f2b9 # v2.1.0
       - run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
       - name: Build
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: opfsolve-${{ matrix.plat }}
           path: opfsolve-${{ matrix.plat }}.tar.gz
 
   build-windows:
     name: windows-x86_64
-    runs-on: windows-latest
+    runs-on: windows-2025
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: julia-actions/setup-julia@4c0cb0fce8556fdb04a90347310e5db8b1f98fb9 # v2.7.0
         with:
-          version: "1.12"
+          version: ${{ env.JULIA_VERSION }}
+      - uses: julia-actions/cache@d10a6fd8f31b12404a54613ebad242900567f2b9 # v2.1.0
       - run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
       - name: Build
         run: tools/build.sh windows-x86_64
       - name: Test
         shell: pwsh
         run: tools/test.ps1
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: opfsolve-windows-x86_64
           path: opfsolve-windows-x86_64.tar.gz
@@ -88,18 +105,39 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-linux, build-macos, build-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: write        # create the release
+      id-token: write        # sign the build provenance
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: The tag matches the version opfsolve reports
+        run: |
+          v=$(sed -n 's/^#define VERSION "\(.*\)"$/\1/p' driver/opfsolve.c)
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but driver/opfsolve.c says $v"; exit 1; }
+          grep -q "^## v$v" CHANGELOG.md || { echo "CHANGELOG.md has no entry for v$v"; exit 1; }
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Corresponding source of the bundled GPL and LGPL libraries
+        run: tools/gpl-sources.sh "$JULIA_VERSION" dist
+      - name: SHA256SUMS
+        run: cd dist && sha256sum -- *.tar.* > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          files: dist/*.tar.gz
+          subject-path: dist/opfsolve-*.tar.gz
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            dist/*.tar.*
+            dist/SHA256SUMS
+          generate_release_notes: true
 
   install:
     needs: release
     uses: ./.github/workflows/install.yml
+    with:
+      # The installers as of the released commit, not of main.
+      ref: ${{ github.sha }}

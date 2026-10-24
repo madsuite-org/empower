@@ -3,9 +3,14 @@ name: Install
 # Runs the published one-line installer, then opfsolve, on each supported
 # platform against the latest release.
 on:
-  # Called by the Release workflow once a release is published: a release
-  # created with GITHUB_TOKEN does not trigger the `release` event.
+  # Called by the Release workflow once a release is published (a release
+  # created with GITHUB_TOKEN does not trigger the `release` event), with the
+  # released commit, so the installers tested are the ones of that release.
   workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
   push:
     branches: [main]
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
@@ -13,9 +18,13 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
-# CI has no HSL licence: install without HSL and run with an explicit MUMPS.
+permissions:
+  contents: read
+
 env:
+  # CI has no HSL licence: install without HSL and run with an explicit MUMPS.
   OPFSOLVE_SKIP_HSL: "1"
+  RAW: https://raw.githubusercontent.com/${{ github.repository }}/${{ inputs.ref || github.sha }}
 
 jobs:
   native:
@@ -27,7 +36,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: One-line install
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- -y
+        run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y
       - name: opfsolve in a new shell
         run: |
           # A new shell reads the startup files the installer edited.
@@ -35,7 +44,7 @@ jobs:
           $sh_new 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
           cat opfsolve-results/summary.csv opfsolve-results/system.txt
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         if: always()
         with:
           name: results-${{ matrix.runner }}
@@ -53,7 +62,7 @@ jobs:
         shell: powershell
         run: |
           $env:OPFSOLVE_YES = '1'
-          irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+          irm "$env:RAW/install.ps1" | iex
           opfsolve case14_ieee case118_ieee --options=linear_solver=mumps
           Get-Content opfsolve-results\summary.csv, opfsolve-results\system.txt
           if ((Select-String -Pattern LOCALLY_SOLVED -Path opfsolve-results\summary.csv).Count -ne 2) { exit 1 }
@@ -84,9 +93,32 @@ jobs:
     steps:
       - run: ${{ matrix.deps }}
       - name: One-line install
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- -y
+        run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y
       - name: opfsolve in a new shell
         run: |
           bash -lic 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
           cat opfsolve-results/summary.csv
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
+
+  # Re-running, an install directory with spaces, the PATH block, and uninstall.
+  lifecycle:
+    name: reinstall, spaces, uninstall
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install into a directory with a space, twice
+        run: |
+          for i in 1 2; do
+            curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y --path "$HOME/my opf"
+          done
+          test "$(grep -c '>>> opfsolve initialize >>>' ~/.bashrc)" = 1
+      - name: opfsolve in a new shell
+        run: |
+          bash -lic 'opfsolve case14_ieee --options=linear_solver=mumps'
+          grep -q LOCALLY_SOLVED opfsolve-results/summary.csv
+      - name: Uninstall
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y --path "$HOME/my opf" --uninstall
+          test ! -e "$HOME/my opf"
+          ! grep -q 'opfsolve initialize' ~/.bashrc ~/.profile
+      - name: Help works when piped
+        run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- --help | grep -q 'Options:'

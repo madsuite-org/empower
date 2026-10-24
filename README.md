@@ -7,7 +7,7 @@ opfsolve uses the HSL MA27 linear solver, which you download yourself under HSL'
 Linux and macOS (Apple silicon):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 ```
 
 Windows (PowerShell):
@@ -30,7 +30,11 @@ opfsolve case118_ieee
 
 A shell cannot change the `PATH` of the terminal that started it, so on Linux and macOS the installer prints the one `export` line that makes `opfsolve` available in the current terminal as well.
 
-Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install directory), `--add-to-path no` (leave the startup files alone), `--hsl LINK` (the download link from HSL's email), and `--hsl-lib FILE` (an HSL library you already have). On Windows, set the environment variables `OPFSOLVE_YES=1`, `OPFSOLVE_DIR`, `OPFSOLVE_ADD_TO_PATH=no`, `OPFSOLVE_HSL`, or `OPFSOLVE_HSL_LIB` before running it.
+Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install directory), `--add-to-path no` (leave the startup files alone), `--hsl LINK` (the download link from HSL's email), `--hsl-lib FILE` (an HSL library you already have), and `--uninstall`; `--help` lists them. On Windows, set the environment variables `OPFSOLVE_YES=1`, `OPFSOLVE_DIR`, `OPFSOLVE_ADD_TO_PATH=no`, `OPFSOLVE_HSL`, `OPFSOLVE_HSL_LIB`, or `OPFSOLVE_UNINSTALL=1` before running it.
+
+**Upgrade** by running the installer again: it installs the latest release (or `OPFSOLVE_VERSION=vX.Y.Z`), keeps your HSL library, and recreates the Ipopt environment only if the release pins different packages. **Uninstall** with `sh -s -- --uninstall` (or `$env:OPFSOLVE_UNINSTALL='1'` on Windows), which removes `~/.opfsolve` and the PATH entries.
+
+**Integrity.** The installer downloads only over HTTPS. It checks each release archive against the release's `SHA256SUMS` and micromamba against its published SHA-256, unpacks into a staging directory, and swaps the result in only when it is complete. Ipopt and the compiler come from conda-forge through lock files in the archive, which pin each package by URL and MD5. Each archive also has a signed build provenance attestation; check it with `gh attestation verify opfsolve-<platform>.tar.gz --repo madsuite-org/opfsolve`.
 
 ## Usage
 
@@ -49,10 +53,10 @@ opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE .
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
 ```sh
-opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options="tol=1e-8"
+opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options="tol=1e-8"
 ```
 
-`opfsolve` prints each step with its elapsed time (downloading, parsing the case and building the model, setting up Ipopt, solving, writing the output), with the full Ipopt log in between.
+`opfsolve` prints each step with its elapsed time (downloading, parsing the case and building the model, solving, writing the output), Ipopt's own output for each solve (`--options=print_level=N` sets how much), and a summary table at the end.
 
 ## Output
 
@@ -71,7 +75,7 @@ opfsolve requires MA27. Its licence is free for personal use, but `opfsolve` nev
 2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`OPFSOLVE_HSL` on Windows). The installer downloads the package and compiles MA27 with `-O3` into `~/.opfsolve/hsl/`. It uses your `gfortran` if you have one (or the compiler in `OPFSOLVE_FC`); otherwise it downloads gfortran from conda-forge. The compiler download and the compile run in the background while Ipopt installs, and the compiler is removed afterwards. Either way it checks that Ipopt can use the result:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --hsl='<download link>'
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --hsl='<download link>'
 ```
 
 ```powershell
@@ -92,14 +96,14 @@ No system packages are needed: conda-forge supplies Ipopt's Fortran runtime and 
 
 ## How it is built
 
-- `emp/lib/libemp.so` (`.dylib` on macOS) holds the ExaModelsPower recipes `acp` (polar) and `acr` (rectangular), compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
+- `emp/lib/libemp.so` (`emp/lib/libemp.dylib` on macOS, `emp/bin/libemp.dll` on Windows) holds the ExaModelsPower recipes `acp` (polar) and `acr` (rectangular), compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/opfsolve` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
 
-`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. After publishing, it runs the one-line installers against the release, then `opfsolve` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. CI has no HSL licence, so it installs with `-y` and `OPFSOLVE_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `opfsolve` refuses to run without MA27; the HSL build is tested by hand.
+`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push. On a `v*` tag it checks that the tag matches the version in `driver/opfsolve.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `opfsolve` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `OPFSOLVE_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `opfsolve` refuses to run without MA27; the HSL build is tested by hand.
 
 ## License
 
-`opfsolve` is MIT licensed. The release archives also contain the compiled ExaModelsPower model library and the Julia runtime, whose components keep their own licenses (MIT, MPL-2.0, BSD, LGPL, and, for parts of SuiteSparse, GPL-2.0+); [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them, and each archive carries their license files in `licenses/`. Ipopt and its dependencies (from conda-forge), your HSL package (from HSL), and the PGLib-OPF data are downloaded from their publishers by the installer and are not distributed with `opfsolve`.
+`opfsolve` is MIT licensed. The release archives also contain the compiled ExaModelsPower model library and the Julia runtime, whose components keep their own licenses (MIT, MPL-2.0, BSD, LGPL, and, for parts of SuiteSparse, GPL-2.0+); [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them, each archive carries their license files in `licenses/`, and each release attaches the corresponding source of the GPL and LGPL libraries (`opfsolve-sources-gpl.tar`). Ipopt and its dependencies (from conda-forge) and your HSL package (from HSL) are downloaded by the installer, and PGLib-OPF cases by `opfsolve` when it first needs them; none of them is distributed with `opfsolve`.
 
 ## Citation
 

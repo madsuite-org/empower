@@ -11,8 +11,11 @@ cd "$(dirname "$0")/.."
 # PrettyTables v3 loads REPL; with ExaPowerIO's LazyArtifacts loading Pkg, Pkg's REPL
 # extension then enters the trimmed image and fails verification. compile_all pins
 # only path-tracked packages into the library build, so v2 is developed from a clone.
-if [ ! -d compile/deps/PrettyTables ]; then
-    git clone -q --depth 1 -b v2.4.0 https://github.com/ronisbr/PrettyTables.jl compile/deps/PrettyTables
+prettytables=99595fcad38a5181e5888e32267cd045fa5b8669   # v2.4.0
+if [ "$(git -C compile/deps/PrettyTables rev-parse HEAD 2>/dev/null)" != "$prettytables" ]; then
+    rm -rf compile/deps/PrettyTables
+    git clone -q https://github.com/ronisbr/PrettyTables.jl compile/deps/PrettyTables
+    git -C compile/deps/PrettyTables checkout -q "$prettytables"
 fi
 julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
 
@@ -34,9 +37,9 @@ julia --startup-file=no --project=compile compile/compile.jl stage/opfsolve/emp
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         # Static, so the driver adds no MinGW runtime DLLs of its own.
-        cc -O2 -Wall -static -o stage/opfsolve/bin/opfsolve.exe driver/opfsolve.c ;;
+        cc -O2 -Wall -Wextra -static -o stage/opfsolve/bin/opfsolve.exe driver/opfsolve.c ;;
     *)
-        cc -O2 -Wall -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm ;;
+        cc -O2 -Wall -Wextra -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm ;;
 esac
 find stage/opfsolve -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'opfsolve*' -type f
 cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/opfsolve/

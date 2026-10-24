@@ -1,10 +1,14 @@
 /*
  * opfsolve: solve AC optimal power flow cases with a compiled ExaModelsPower
- * model library (cnlp ABI v0.1) and any Ipopt shared library (>= 3.13).
+ * model library (cnlp ABI v0.1) and any Ipopt shared library (>= 3.14, which has hsllib).
  *
  * Both libraries are loaded at run time, so the same driver works with the
  * conda-forge Ipopt, with or without the user's own HSL (hsllib), or a local one.
  */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE
+#endif
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -49,7 +53,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.4.3"
+#define VERSION "0.5.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
@@ -148,6 +152,12 @@ static void *xmalloc(size_t n) {
     return p;
 }
 
+static void *xrealloc(void *p, size_t n) {
+    p = realloc(p, n ? n : 1);
+    if (!p) die("out of memory");
+    return p;
+}
+
 static void *xcalloc(size_t n, size_t s) {
     void *p = calloc(n ? n : 1, s);
     if (!p) die("out of memory");
@@ -166,16 +176,18 @@ static void *sym(void *h, const char *prefix, const char *name) {
 static int run(char *const args[]) {
 #ifdef _WIN32
     /* _spawnvp re-joins argv with spaces, so quote each argument. */
-    char *q[16];
     int n = 0;
-    for (; args[n] && n < 15; n++) {
-        size_t L = strlen(args[n]) + 3;
-        q[n] = malloc(L);
-        snprintf(q[n], L, "\"%s\"", args[n]);
+    while (args[n]) n++;
+    char **q = xmalloc((n + 1) * sizeof *q);
+    for (int i = 0; i < n; i++) {
+        size_t L = strlen(args[i]) + 3;
+        q[i] = xmalloc(L);
+        snprintf(q[i], L, "\"%s\"", args[i]);
     }
     q[n] = NULL;
     intptr_t rc = _spawnvp(_P_WAIT, args[0], (const char *const *)q);
     for (int i = 0; i < n; i++) free(q[i]);
+    free(q);
     return (int)rc;
 #else
     pid_t pid;
@@ -189,7 +201,7 @@ static int run(char *const args[]) {
 /* Download url to path with curl. Returns 0 on success. */
 static int download(const char *url, const char *path) {
     /* -s without -S: a failed download gets opfsolve's own message, not curl's. */
-    char *c[] = {"curl", "-fsL", "-o", (char *)path, (char *)url, NULL};
+    char *c[] = {"curl", "-fsL", "--proto", "=https", "--tlsv1.2", "-o", (char *)path, (char *)url, NULL};
     int rc = run(c);
     if (rc == -1) die("curl is needed to download %s", url);
     return rc;
@@ -447,9 +459,13 @@ static Table read_table(const char *text, const char *name) {
     snprintf(key, sizeof key, "mpc.%s", name);
     const char *p = text;
     while ((p = strstr(p, key))) {
+        /* Skip a match inside a % comment on its line. */
+        const char *ls = p;
+        while (ls > text && ls[-1] != '\n') ls--;
+        int commented = memchr(ls, '%', (size_t)(p - ls)) != NULL;
         const char *q = p + strlen(key);
         while (*q == ' ' || *q == '\t') q++;
-        if (*q == '=') break;
+        if (*q == '=' && !commented) break;
         p = q;
     }
     if (!p) return t;
@@ -459,20 +475,22 @@ static Table read_table(const char *text, const char *name) {
     int cap = 1024;
     t.v = xmalloc(cap * sizeof(double));
     int n = 0, col = 0;
-    while (*p && *p != ']') {
+    while (*p) {
         if (*p == '%') {
             while (*p && *p != '\n') p++;
-        } else if (*p == ';' || *p == '\n') {
+        } else if (*p == ';' || *p == '\n' || *p == ']') {
+            int end = *p == ']';
             if (col) {
                 if (!t.cols) t.cols = col;
                 if (col < t.cols) /* pad a short row */
                     for (; col < t.cols; col++) {
-                        if (n == cap) t.v = realloc(t.v, (cap *= 2) * sizeof(double));
+                        if (n == cap) t.v = xrealloc(t.v, (cap *= 2) * sizeof(double));
                         t.v[n++] = 0;
                     }
                 t.rows++;
                 col = 0;
             }
+            if (end) break;
             p++;
         } else if (isspace((unsigned char)*p) || *p == ',') {
             p++;
@@ -482,7 +500,7 @@ static Table read_table(const char *text, const char *name) {
             if (end == p) { p++; continue; }
             p = end;
             if (t.cols && col >= t.cols) continue; /* ignore extra columns */
-            if (n == cap) t.v = realloc(t.v, (cap *= 2) * sizeof(double));
+            if (n == cap) t.v = xrealloc(t.v, (cap *= 2) * sizeof(double));
             t.v[n++] = x;
             col++;
         }
@@ -564,7 +582,7 @@ typedef struct {
 } List;
 
 static void push(List *l, const char *s) {
-    if (l->n == l->cap) l->v = realloc(l->v, (l->cap = l->cap ? 2 * l->cap : 16) * sizeof(char *));
+    if (l->n == l->cap) l->v = xrealloc(l->v, (l->cap = l->cap ? 2 * l->cap : 16) * sizeof(char *));
     l->v[l->n++] = strdup(s);
 }
 
@@ -660,10 +678,10 @@ static void case_name(const char *path, char *out, size_t cap) {
 static char *slurp(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *s = xmalloc(n + 1);
+    long n = -1;
+    if (fseek(f, 0, SEEK_END) == 0) n = ftell(f);
+    if (n < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    char *s = xmalloc((size_t)n + 1);
     s[fread(s, 1, n, f)] = 0;
     fclose(f);
     return s;
@@ -685,6 +703,17 @@ typedef struct {
 
 static void write_solution(const char *path, const char *casefile, Ctx *C, Model *M,
                            const Result *r, const double *x, const double *y);
+
+/* A CSV field, quoted when it holds a comma, quote, or newline. */
+static void csv_field(FILE *f, const char *v) {
+    if (!strpbrk(v, ",\"\r\n")) { fputs(v, f); return; }
+    fputc('"', f);
+    for (; *v; v++) {
+        if (*v == '"') fputc('"', f);
+        fputc(*v, f);
+    }
+    fputc('"', f);
+}
 
 static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result *r) {
     double t_case = now();
@@ -709,7 +738,10 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     double *x = xmalloc(n * sizeof *x), *xl = xmalloc(n * sizeof *x), *xu = xmalloc(n * sizeof *x);
     double *gl = xmalloc(m * sizeof *x), *gu = xmalloc(m * sizeof *x), *g = xmalloc(m * sizeof *x);
     double *y = xcalloc(m, sizeof *x), *zl = xcalloc(n, sizeof *x), *zu = xcalloc(n, sizeof *x);
-    if (M.meta(M.id, x, xl, xu, gl, gu) != 0) return case_error("could not read model bounds");
+    int rc = 1;
+    void *P = NULL;
+    Ipopt *I = &C->I;
+    if (M.meta(M.id, x, xl, xu, gl, gu) != 0) { rc = case_error("could not read model bounds"); goto done; }
     for (int i = 0; i < n; i++) {
         if (xl[i] < -1e20) xl[i] = -1e20;
         if (xu[i] > 1e20) xu[i] = 1e20;
@@ -719,10 +751,8 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         if (gu[i] > 1e20) gu[i] = 1e20;
     }
 
-    Ipopt *I = &C->I;
-    void *P = I->create(n, xl, xu, m, gl, gu, nnzj, nnzh, 1, eval_f, eval_g, eval_grad, eval_jac,
-                        eval_h);
-    if (!P) return case_error("CreateIpoptProblem failed");
+    P = I->create(n, xl, xu, m, gl, gu, nnzj, nnzh, 1, eval_f, eval_g, eval_grad, eval_jac, eval_h);
+    if (!P) { rc = case_error("CreateIpoptProblem failed"); goto done; }
     if (I->intermediate) I->intermediate(P, on_iter);
     snprintf(path, sizeof path, "%s/ipopt.log", out);
     I->out_file(P, path, 5);
@@ -735,12 +765,13 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         const char *v = eq + 1;
         char *end;
         long iv = strtol(v, &end, 10);
-        Bool ok;
-        if (*v && !*end) ok = I->int_opt(P, key, (int)iv);
-        else {
-            double dv = strtod(v, &end);
-            ok = (*v && !*end) ? I->num_opt(P, key, dv) : I->str_opt(P, key, v);
-        }
+        /* Ipopt checks the option's type: try integer, then real, then string,
+         * so that tol=1 or max_wall_time=3600 work for real-valued options. */
+        int is_int = *v && !*end;
+        double dv = strtod(v, &end);
+        int is_num = *v && !*end;
+        Bool ok = (is_int && I->int_opt(P, key, (int)iv)) || (is_num && I->num_opt(P, key, dv)) ||
+                  I->str_opt(P, key, v);
         if (!ok) die("Ipopt rejected option %s", opts[k]);
     }
 
@@ -763,15 +794,18 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     write_solution(path, casefile, C, &M, r, x, y);
 
     if (C->summary) {
-        fprintf(C->summary, "%s,%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f\n", name, C->form,
+        csv_field(C->summary, name);
+        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f\n", C->form,
                 termination_status(r->status), status_name(r->status), r->obj, r->iters, r->n,
                 r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb);
         fflush(C->summary);
     }
+    rc = (r->status == 0 || r->status == 1) ? 0 : 1;
 
-    I->free(P);
+done:
+    if (P) I->free(P);
     free(x); free(xl); free(xu); free(gl); free(gu); free(g); free(y); free(zl); free(zu);
-    return (r->status == 0 || r->status == 1) ? 0 : 1;
+    return rc;
 }
 
 /*
@@ -941,12 +975,12 @@ static int probe_ma27(Ipopt *I, const char *hsllib) {
     I->str_opt(P, "linear_solver", "ma27");
     /* Ipopt reports a missing solver on stdout even at print_level 0. */
     fflush(stdout);
-    int saved = dup(1), devnull = open(NULL_DEVICE, O_WRONLY);
+    int saved = dup(1), devnull = saved >= 0 ? open(NULL_DEVICE, O_WRONLY) : -1;
     if (devnull >= 0) dup2(devnull, 1);
     int status = I->solve(P, &x, NULL, &obj, NULL, &zl, &zu, NULL);
     fflush(stdout);
     if (devnull >= 0) { dup2(saved, 1); close(devnull); }
-    close(saved);
+    if (saved >= 0) close(saved);
     I->free(P);
     return status == 0;
 }
@@ -1039,7 +1073,7 @@ static const char *usage =
     "               linear_solver\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
     "               $OPFSOLVE_IPOPT_LIB)\n"
-    "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
+    "  --model-lib  compiled ExaModelsPower library (default <install>/emp, from the release)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
     "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv;\n"

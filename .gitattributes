@@ -1,0 +1,5 @@
+# Scripts keep LF line endings on every checkout, including Windows.
+*.sh text eol=lf
+*.c text eol=lf
+*.jl text eol=lf
+*.ps1 text

@@ -3,3 +3,6 @@ compile/deps/
 *.tar.gz
 opfsolve/
 opfsolve-results/
+a.out
+a.exe
+*.pdb
