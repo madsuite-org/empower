@@ -34,10 +34,11 @@ These are fetched from their publishers' own release pages onto the user's machi
 
 | Component | License | Source |
 |---|---|---|
-| Ipopt, IDAES build (`idaes-solvers-<platform>.tar.gz`) | EPL-2.0 (Ipopt), plus the licenses in that archive's `license.txt` | https://github.com/IDAES/idaes-ext/releases |
-| HSL linear solvers (MA27 and others) inside the IDAES Ipopt | Distributed by IDAES under a distribution license obtained by NETL ([IDAES documentation](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)) | https://www.hsl.rl.ac.uk |
+| Ipopt 3.14 and its dependencies (MUMPS, OpenBLAS, the GCC Fortran runtime, and others) | EPL-2.0 (Ipopt), CeCILL-C (MUMPS), BSD-3-Clause (OpenBLAS), and each package's own license | https://anaconda.org/conda-forge/ipopt |
+| micromamba, which installs the above | BSD-3-Clause | https://github.com/mamba-org/micromamba-releases |
+| HSL MA27 (optional) | Your own HSL licence; the installer compiles your copy on your machine | https://www.hsl.rl.ac.uk |
 | PGLib-OPF v23.07 case files | Creative Commons Attribution 4.0 (CC BY 4.0) | https://github.com/power-grid-lib/pglib-opf |
 
-**Rule: `opfsolve` never distributes compiled Ipopt or HSL.** No release archive, container image, or other package of `opfsolve` may contain an Ipopt or HSL binary; both are always downloaded by the user from their publisher. `tools/check-no-ipopt-hsl.sh` enforces this on every build: it fails if an archive contains an Ipopt or HSL library file, or a binary that defines Ipopt or HSL symbols. The free HSL licences do not permit redistribution. All technical papers, sales and publicity material resulting from use of the HSL codes within Ipopt must contain the following acknowledgement: HSL, a collection of Fortran codes for large-scale scientific computation. See http://www.hsl.rl.ac.uk.
+**Rule: `opfsolve` never distributes compiled Ipopt or HSL.** No release archive, container image, or other package of `opfsolve` may contain an Ipopt or HSL binary; Ipopt is always downloaded from conda-forge, and HSL is compiled on the user's machine from the user's own licensed copy (HSL's personal licence allows modifying it "to optimise its performance for the Licensee's use on a particular platform"). `tools/check-no-ipopt-hsl.sh` enforces this on every build: it fails if an archive contains an Ipopt or HSL library file, or a binary that defines Ipopt or HSL symbols. The free HSL licences do not permit redistribution. All technical papers, sales and publicity material resulting from use of the HSL codes within Ipopt must contain the following acknowledgement: HSL, a collection of Fortran codes for large-scale scientific computation. See http://www.hsl.rl.ac.uk.
 
 **PGLib-OPF.** CC BY 4.0 requires attribution; see the Citation section of [README.md](README.md).

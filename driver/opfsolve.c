@@ -3,7 +3,7 @@
  * model library (cnlp ABI v0.1) and any Ipopt shared library (>= 3.13).
  *
  * Both libraries are loaded at run time, so the same driver works with the
- * IDAES Ipopt build, a conda Ipopt, or a local one.
+ * conda-forge Ipopt, with or without the user's own HSL (hsllib), or a local one.
  */
 #include <ctype.h>
 #include <dirent.h>
@@ -24,7 +24,8 @@
 #include <process.h>
 #include <windows.h>
 #define MODEL_LIB "emp/bin/libemp.dll"
-#define IPOPT_LIB "ipopt/libipopt-3.dll"
+#define IPOPT_LIB "ipopt/Library/bin/ipopt-3.dll"
+#define HSL_LIB "hsl/libhsl.dll"
 #define NULL_DEVICE "NUL"
 #define MKDIR(p) _mkdir(p)
 #else
@@ -36,15 +37,18 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #define MODEL_LIB "emp/lib/libemp.dylib"
-#define IPOPT_LIB "ipopt/libipopt.dylib"
+#define IPOPT_LIB "ipopt/lib/libipopt.dylib"
+#define HSL_LIB "hsl/libhsl.dylib"
 #else
 #define MODEL_LIB "emp/lib/libemp.so"
-#define IPOPT_LIB "ipopt/libipopt.so"
+#define IPOPT_LIB "ipopt/lib/libipopt.so"
+#define HSL_LIB "hsl/libhsl.so"
 #endif
 extern char **environ;
 #endif
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
+#define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
 #define PGLIB_TGZ "https://github.com/power-grid-lib/pglib-opf/archive/refs/tags/v" PGLIB_VERSION ".tar.gz"
@@ -180,8 +184,9 @@ static int run(char *const args[]) {
 #endif
 }
 
-/* Release layout: <root>/bin/opfsolve, the model library MODEL_LIB and (placed
- * by the installer) the Ipopt library IPOPT_LIB under <root>, and <root>/cases/. */
+/* Release layout: <root>/bin/opfsolve and the model library MODEL_LIB; placed by
+ * the installer: Ipopt (conda-forge) at IPOPT_LIB, the user's own compiled HSL at
+ * HSL_LIB, and PGLib-OPF cases in <root>/cases/. */
 static char root[4096];
 
 static void find_root(void) {
@@ -209,13 +214,12 @@ static void find_root(void) {
     snprintf(root, sizeof root, "%s", real);
 }
 
+/* <root>/<rel> if it exists, as a new string. */
 static const char *under_root(const char *rel) {
-    static char buf[2][8192];
-    static int which = 0;
+    char b[8192];
     if (!*root) return NULL;
-    char *b = buf[which ^= 1];
-    snprintf(b, sizeof buf[0], "%s/%s", root, rel);
-    return access(b, R_OK) == 0 ? b : NULL;
+    snprintf(b, sizeof b, "%s/%s", root, rel);
+    return access(b, R_OK) == 0 ? strdup(b) : NULL;
 }
 
 static const char *case_dir(void) {
@@ -659,7 +663,7 @@ static char *slurp(const char *path) {
 /* ----------------------------------------------------------------- solving */
 
 typedef struct {
-    const char *form, *model, *linear_solver;
+    const char *form, *model, *linear_solver, *hsllib;
     Ipopt I;
     void *hm;
     FILE *summary;
@@ -715,6 +719,7 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     if (I->intermediate) I->intermediate(P, on_iter);
     snprintf(path, sizeof path, "%s/ipopt.log", out);
     I->out_file(P, path, 5);
+    if (C->hsllib) I->str_opt(P, "hsllib", C->hsllib);
     I->str_opt(P, "linear_solver", C->linear_solver);
     for (int k = 0; k < nopts; k++) {
         char key[512];
@@ -921,12 +926,13 @@ static Bool p_h(int n, double *x, Bool nx, double s, int m, double *y, Bool ny, 
     return 1;
 }
 
-static int probe_ma27(Ipopt *I) {
+static int probe_ma27(Ipopt *I, const char *hsllib) {
     double xl = -1e20, xu = 1e20, x = 0, obj = 0, zl = 0, zu = 0;
     void *P = I->create(1, &xl, &xu, 0, NULL, NULL, 0, 1, 1, p_f, p_g, p_grad, p_jac, p_h);
     if (!P) return 0;
     I->int_opt(P, "print_level", 0);
     I->str_opt(P, "sb", "yes");
+    if (hsllib) I->str_opt(P, "hsllib", hsllib);
     I->str_opt(P, "linear_solver", "ma27");
     /* Ipopt reports a missing solver on stdout even at print_level 0. */
     fflush(stdout);
@@ -944,7 +950,7 @@ static int probe_ma27(Ipopt *I) {
 
 static const char *usage =
     "usage: opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
-    "                [--output=DIR] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
+    "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC optimal power flow problem for one or more MATPOWER cases.\n"
     "\n"
@@ -957,7 +963,11 @@ static const char *usage =
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
     "  --output     output directory (default ./opfsolve-results)\n"
-    "  --ipopt-lib  Ipopt shared library (default <install>/ipopt, or $OPFSOLVE_IPOPT_LIB)\n"
+    "  --hsl-lib    HSL library for Ipopt's hsllib option, providing MA27 (and MA57, MA86,\n"
+    "               MA97 if it has them); default <install>/hsl, or $OPFSOLVE_HSL_LIB;\n"
+    "               without one, Ipopt uses MUMPS\n"
+    "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
+    "               $OPFSOLVE_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
@@ -979,6 +989,7 @@ int main(int argc, char **argv) {
     t_start = now();
     find_root();
     const char *modellib = getenv("OPFSOLVE_MODEL_LIB"), *ipoptlib = getenv("OPFSOLVE_IPOPT_LIB"),
+               *hsllib = getenv("OPFSOLVE_HSL_LIB"),
                *form = "polar", *solver = "ipopt", *out = "opfsolve-results", *v;
     List args = {0};
 
@@ -996,6 +1007,7 @@ int main(int argc, char **argv) {
         else if ((v = flag(a, "--options", &i, argc, argv))) parse_options(v);
         else if ((v = flag(a, "--output", &i, argc, argv))) out = v;
         else if ((v = flag(a, "--ipopt-lib", &i, argc, argv))) ipoptlib = v;
+        else if ((v = flag(a, "--hsl-lib", &i, argc, argv))) hsllib = v;
         else if ((v = flag(a, "--model-lib", &i, argc, argv))) modellib = v;
         else if (a[0] == '-') { fputs(usage, stderr); die("unknown option %s", a); }
         else push(&args, a);
@@ -1011,10 +1023,15 @@ int main(int argc, char **argv) {
     if (!modellib) die("no model library: pass --model-lib or set OPFSOLVE_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);
     if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set OPFSOLVE_IPOPT_LIB");
+    if (hsllib && !*hsllib) hsllib = NULL;
+    if (!hsllib) hsllib = under_root(HSL_LIB);
+    if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);
+    C.hsllib = hsllib;
 
     printf("opfsolve %s\n  form:          %s\n  solver:        %s\n  model library: %s\n"
            "  Ipopt library: %s\n  output:        %s\n",
            VERSION, form, solver, modellib, ipoptlib, out);
+    printf("  HSL library:   %s\n", hsllib ? hsllib : "(none)");
     for (int k = 0; k < nopts; k++) printf("  option:        %s\n", opts[k]);
 
     List cases = {0};
@@ -1071,14 +1088,16 @@ int main(int argc, char **argv) {
     C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
     C.I.intermediate = lib_sym(hi, "SetIntermediateCallback");
     step("Ipopt loaded (%.3f s)", now() - t0);
-    /* HSL is absent from some Ipopt builds (IDAES macOS x86_64, most conda builds),
-     * and some of those still export MA27 entry points that look for a separate
-     * libhsl at solve time. So ask Ipopt: solve min x^2 with MA27. */
-    int has_ma27 = probe_ma27(&C.I);
+    /* Whether MA27 works depends on the Ipopt build and on the HSL library, if
+     * any, which Ipopt only loads at solve time. So ask Ipopt: solve min x^2
+     * with MA27. */
+    int has_ma27 = probe_ma27(&C.I, C.hsllib);
     C.linear_solver = has_ma27 ? "ma27" : "mumps";
     for (int k = 0; k < nopts; k++)
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
-    step("linear solver: %s%s", C.linear_solver, has_ma27 ? "" : " (this Ipopt has no HSL MA27)");
+    if (has_ma27) step("linear solver: %s", C.linear_solver);
+    else if (C.hsllib) step("linear solver: %s (MA27 could not be loaded from %s)", C.linear_solver, C.hsllib);
+    else step("linear solver: %s (no HSL library; for MA27 see %s)", C.linear_solver, MA27_URL);
 
     MKDIR(out);
     char path[8192];

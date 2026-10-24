@@ -23,7 +23,19 @@
   doi={10.1007/s10107-004-0559-y}
 }
 
-% Linear solver: HSL MA27, inside the IDAES Ipopt build. HSL also requires the
+% Linear solver without HSL: MUMPS, inside the conda-forge Ipopt
+@article{amestoy2001fully,
+  title={A fully asynchronous multifrontal solver using distributed dynamic scheduling},
+  author={Amestoy, Patrick R. and Duff, Iain S. and L'Excellent, Jean-Yves and Koster, Jacko},
+  journal={SIAM Journal on Matrix Analysis and Applications},
+  volume={23},
+  number={1},
+  pages={15--41},
+  year={2001},
+  doi={10.1137/S0895479899358194}
+}
+
+% Linear solver with HSL: MA27, from your own licensed copy. HSL also requires the
 % acknowledgement "HSL, a collection of Fortran codes for large-scale scientific
 % computation. See http://www.hsl.rl.ac.uk." in all technical papers.
 @misc{hsl,

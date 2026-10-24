@@ -21,7 +21,8 @@ foreach ($f in 'polar', 'rect') {
         if ($row.termination_status -ne 'LOCALLY_SOLVED') { Write-Host "not solved: $($row.case) $f"; $bad = 1 }
         $r = $ref[$row.case]
         if ([math]::Abs(([double]$row.objective - $r) / $r) -gt 1e-4) { Write-Host "objective mismatch: $($row.case) $f $($row.objective)"; $bad = 1 }
-        if (-not (Select-String -Quiet -Pattern 'linear solver ma27' -Path "$f\$($row.case)\ipopt.log")) { Write-Host "not ma27: $($row.case) $f"; $bad = 1 }
+        # CI has no HSL licence, so Ipopt runs with MUMPS here.
+        if (-not (Select-String -Quiet -Pattern 'linear solver mumps' -Path "$f\$($row.case)\ipopt.log")) { Write-Host "not mumps: $($row.case) $f"; $bad = 1 }
     }
     if ((Import-Csv "$f\summary.csv").Count -ne 2) { Write-Host "expected 2 cases in $f"; $bad = 1 }
 }

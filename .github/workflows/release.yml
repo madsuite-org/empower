@@ -25,9 +25,6 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v5
-      - name: System libraries for IDAES Ipopt
-        # libquadmath exists on x86_64 only.
-        run: dnf install -y libgfortran lapack blas libgomp && if [ "$(uname -m)" = x86_64 ]; then dnf install -y libquadmath; fi
       - name: Install Julia
         run: |
           curl -fsSL https://install.julialang.org | sh -s -- --yes --default-channel 1.12

@@ -1,25 +1,36 @@
 #!/bin/sh
-# Install opfsolve (compiled ExaModelsPower AC OPF models + the IDAES build of
-# Ipopt) and solve AC OPF cases with it.
+# Install opfsolve (compiled ExaModelsPower AC OPF models) with Ipopt from
+# conda-forge, optionally build the user's own HSL MA27, and solve AC OPF cases.
 #
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc --form=rect
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- all
+#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | OPFSOLVE_HSL='<your HSL download link>' sh
 #
 # Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
 # pglib_opf_case118_ieee. Pass --install-only to stop after installing.
+#
+# HSL (MA27). opfsolve never distributes HSL. Without it Ipopt uses MUMPS. To use
+# MA27, request the free personal licence at
+#   https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
+# and either
+#   OPFSOLVE_HSL=<download link from the email, or the downloaded .tar.gz/.zip>
+#       to have this script compile it, optimized, on this machine, or
+#   OPFSOLVE_HSL_LIB=<path to an HSL library you already have (libhsl, libcoinhsl, HSL_jll)>
+#       to use that library as is.
 #
 # Environment:
 #   OPFSOLVE_DIR      install directory (default ./opfsolve)
 #   OPFSOLVE_VERSION  release tag (default: latest)
 #   OPFSOLVE_ARCHIVE  local release archive to install instead of downloading one
-#   IDAES_VERSION     idaes-ext release tag (default 3.4.2)
+#   OPFSOLVE_HSL, OPFSOLVE_HSL_LIB   see above
 set -eu
 
 REPO="madsuite-org/opfsolve"
 DIR="${OPFSOLVE_DIR:-$PWD/opfsolve}"
-VERSION="${OPFSOLVE_VERSION:-latest}"
-IDAES_VERSION="${IDAES_VERSION:-3.4.2}"
+REL="${OPFSOLVE_VERSION:-latest}"
+IPOPT_SPEC="ipopt=3.14.20"
+MAMBA_VERSION="2.9.0-0"
+MA27_URL="https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 
 say() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -31,7 +42,6 @@ install_only=0
 if [ "${1:-}" = "--install-only" ]; then install_only=1; shift; fi
 [ $# -eq 0 ] && [ $install_only -eq 0 ] && set -- case118_ieee
 
-# Platform names used by our release and by idaes-ext.
 os=$(uname -s)
 arch=$(uname -m)
 case "$arch" in
@@ -42,48 +52,29 @@ esac
 case "$os" in
     Linux)
         plat="linux-$arch"
-        # Read os-release in a subshell: it defines VERSION, ID, and others,
-        # which must not leak into this script's variables.
-        osr() { [ -r /etc/os-release ] && (. /etc/os-release; eval "printf '%s' \"\${$1:-}\"") || true; }
-        id=$(osr ID); ver=$(osr VERSION_ID); like=$(osr ID_LIKE)
-        major=${ver%%.*}
-        case "$id $like" in
-            *ubuntu*)
-                if [ "${major:-22}" -ge 22 ] 2>/dev/null; then d=ubuntu2204
-                elif [ "${major}" -ge 20 ] 2>/dev/null; then d=ubuntu2004
-                else d=ubuntu1804; fi ;;
-            *debian*)
-                if [ "${major:-12}" -ge 12 ] 2>/dev/null; then d=ubuntu2204; else d=ubuntu2004; fi ;;
-            *rhel* | *fedora* | *centos* | *rocky* | *almalinux*)
-                if [ "${major:-8}" -ge 8 ] 2>/dev/null || [ "$id" = fedora ]; then d=el8; else d=el7; fi ;;
-            *) d=ubuntu2204 ;;
-        esac
-        iplat="$d-$arch"
-        libipopt=libipopt.so
-        ;;
+        cplat=$([ "$arch" = x86_64 ] && echo linux-64 || echo linux-aarch64)
+        ext=so ;;
     Darwin)
         [ "$arch" = aarch64 ] || die "macOS on Intel is not supported; opfsolve needs Apple silicon (arm64)"
-        plat="macos-$arch"
-        iplat="darwin-$arch"
-        libipopt=libipopt.dylib
-        ;;
-    *) die "unsupported OS: $os (use WSL on Windows)" ;;
+        plat="macos-$arch"; cplat=osx-arm64; ext=dylib ;;
+    *) die "unsupported OS: $os (on Windows, use install.ps1)" ;;
 esac
 say "platform: $plat"
 say "install directory: $DIR"
+mkdir -p "$DIR"
 
+# --- opfsolve ----------------------------------------------------------------
 if [ ! -x "$DIR/bin/opfsolve" ]; then
-    mkdir -p "$DIR"
     if [ -n "${OPFSOLVE_ARCHIVE:-}" ]; then
         say "installing opfsolve from $OPFSOLVE_ARCHIVE"
         tar xzf "$OPFSOLVE_ARCHIVE" -C "$DIR" --strip-components 1
     else
-        if [ "$VERSION" = latest ]; then
+        if [ "$REL" = latest ]; then
             url="https://github.com/$REPO/releases/latest/download/opfsolve-$plat.tar.gz"
         else
-            url="https://github.com/$REPO/releases/download/$VERSION/opfsolve-$plat.tar.gz"
+            url="https://github.com/$REPO/releases/download/$REL/opfsolve-$plat.tar.gz"
         fi
-        say "downloading opfsolve ($VERSION): $url"
+        say "downloading opfsolve ($REL): $url"
         curl -fSL --progress-bar "$url" | tar xz -C "$DIR" --strip-components 1 ||
             die "no opfsolve release for $plat at $url"
     fi
@@ -92,33 +83,106 @@ else
     say "opfsolve already installed: $("$DIR/bin/opfsolve" --version)"
 fi
 
-if [ ! -e "$DIR/ipopt/$libipopt" ]; then
-    iurl="https://github.com/IDAES/idaes-ext/releases/download/$IDAES_VERSION/idaes-solvers-$iplat.tar.gz"
-    say "downloading Ipopt (IDAES $IDAES_VERSION build with HSL MA27): $iurl"
-    mkdir -p "$DIR/ipopt"
-    curl -fSL --progress-bar "$iurl" | tar xz -C "$DIR/ipopt" 2>/dev/null ||
-        die "no IDAES Ipopt build for $iplat"
-    [ -e "$DIR/ipopt/$libipopt" ] || die "$libipopt not found in the IDAES archive"
-    echo "idaes-ext $IDAES_VERSION $iplat" > "$DIR/ipopt/SOURCE"
-    say "installed $DIR/ipopt/$libipopt"
+# --- conda-forge tools (micromamba) ------------------------------------------
+MM="$DIR/.mamba/micromamba"
+export MAMBA_ROOT_PREFIX="$DIR/.mamba/root"
+mamba() {
+    if [ ! -x "$MM" ]; then
+        murl="https://github.com/mamba-org/micromamba-releases/releases/download/$MAMBA_VERSION/micromamba-$cplat"
+        say "downloading micromamba $MAMBA_VERSION (conda-forge package manager): $murl"
+        mkdir -p "$DIR/.mamba"
+        curl -fSL --progress-bar -o "$MM" "$murl" || die "could not download micromamba"
+        chmod +x "$MM"
+    fi
+    "$MM" "$@"
+}
+
+# --- Ipopt from conda-forge --------------------------------------------------
+if [ ! -e "$DIR/ipopt/lib/libipopt.$ext" ]; then
+    say "installing Ipopt from conda-forge ($IPOPT_SPEC, with MUMPS and OpenBLAS)"
+    mamba create -y -q -p "$DIR/ipopt" -c conda-forge --override-channels "$IPOPT_SPEC" >/dev/null ||
+        die "could not install Ipopt from conda-forge"
+    [ -e "$DIR/ipopt/lib/libipopt.$ext" ] || die "libipopt.$ext missing after installing Ipopt"
+    echo "conda-forge $IPOPT_SPEC" > "$DIR/ipopt/SOURCE"
+    say "installed $DIR/ipopt/lib/libipopt.$ext"
 else
     say "Ipopt already installed: $(cat "$DIR/ipopt/SOURCE" 2>/dev/null || echo "$DIR/ipopt")"
 fi
 
-# The IDAES Linux build links against the system Fortran runtime and LAPACK.
-if [ "$os" = Linux ] && command -v ldd >/dev/null; then
-    missing=$(ldd "$DIR/ipopt/$libipopt" | awk '/not found/ {print $1}' | tr '\n' ' ')
-    if [ -n "$missing" ]; then
-        die "Ipopt needs system libraries: $missing
-  Debian/Ubuntu: sudo apt-get install libgfortran5 liblapack3 libblas3 libgomp1
-  RHEL/Fedora:   sudo dnf install libgfortran lapack blas libgomp$([ "$arch" = x86_64 ] && echo ' libquadmath')"
+# --- HSL ----------------------------------------------------------------------
+hsl="$DIR/hsl/libhsl.$ext"
+
+# Compile the user's own HSL package, optimized for this machine. HSL's personal
+# licence permits modifying the software only to optimise its performance for
+# the licensee's use on a particular platform, which is what this does; the
+# result stays on this machine.
+build_hsl() {
+    src=$1
+    work="$DIR/hsl/build"
+    rm -rf "$work"; mkdir -p "$work"; chmod 700 "$DIR/hsl" "$work"
+    case "$src" in
+        http://* | https://*)
+            # A download link from HSL's email is a page; the archive is under it.
+            case "$src" in *.tar.gz | *.tgz | *.zip) ;; */) src="${src}package.tar.gz" ;; *) src="$src/package.tar.gz" ;; esac
+            say "downloading your HSL package"
+            curl -fsSL -o "$work/pkg" "$src" || die "could not download the HSL package (download links expire after 7 days)"
+            pkg="$work/pkg" ;;
+        *) [ -f "$src" ] || die "HSL package not found: $src"; pkg=$src ;;
+    esac
+    case "$(head -c 2 "$pkg" | od -An -tx1 | tr -d ' \n')" in
+        1f8b) tar xzf "$pkg" -C "$work" ;;
+        504b) command -v unzip >/dev/null || die "unzip is needed for a .zip HSL package"; unzip -q "$pkg" -d "$work" ;;
+        *) die "the HSL package is neither .tar.gz nor .zip (an expired or already used download link returns a web page)" ;;
+    esac
+    top=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -1)
+    say "installing a Fortran compiler from conda-forge to build HSL"
+    mamba create -y -q -p "$work/tools" -c conda-forge --override-channels gfortran meson ninja pkg-config >/dev/null ||
+        die "could not install the Fortran compiler"
+    fc=$(ls "$work"/tools/bin/*gfortran | head -1)
+    mkdir -p "$DIR/hsl"
+    if [ -f "$top/meson.build" ]; then
+        # Coin-HSL and Coin-HSL Archive.
+        say "building $(basename "$top") with meson, buildtype=release"
+        (cd "$top" && PATH="$work/tools/bin:$PATH" FC="$fc" meson setup build --buildtype=release \
+            --prefix="$work/inst" >"$work/build.log" 2>&1 && PATH="$work/tools/bin:$PATH" meson install -C build >>"$work/build.log" 2>&1) ||
+            die "HSL build failed; see $work/build.log"
+        lib=$(find "$work/inst" -name "libcoinhsl*.$ext" -type f | head -1)
+        [ -n "$lib" ] || die "no libcoinhsl in the HSL build; see $work/build.log"
+        cp "$lib" "$hsl"
+    elif [ -f "$top/src/ma27d.f" ]; then
+        # The standalone MA27 package.
+        say "compiling $(basename "$top") (double precision) with -O3"
+        if [ "$os" = Darwin ]; then shared="-dynamiclib"; else shared="-shared"; fi
+        "$fc" -O3 -fPIC $shared -o "$hsl" "$top/src/ma27d.f" -Wl,-rpath,"$DIR/ipopt/lib" ||
+            die "compiling MA27 failed"
+    else
+        die "unrecognised HSL package: expected the MA27 package (src/ma27d.f) or Coin-HSL (meson.build)"
     fi
+    echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $("$fc" --version | head -1)" > "$DIR/hsl/SOURCE"
+    rm -rf "$work"
+    say "installed $hsl"
+}
+
+if [ -n "${OPFSOLVE_HSL_LIB:-}" ]; then
+    [ -f "$OPFSOLVE_HSL_LIB" ] || die "OPFSOLVE_HSL_LIB not found: $OPFSOLVE_HSL_LIB"
+    mkdir -p "$DIR/hsl"
+    ln -sf "$OPFSOLVE_HSL_LIB" "$hsl"
+    echo "your library $OPFSOLVE_HSL_LIB" > "$DIR/hsl/SOURCE"
+    say "using your HSL library $OPFSOLVE_HSL_LIB"
+elif [ -n "${OPFSOLVE_HSL:-}" ]; then
+    build_hsl "$OPFSOLVE_HSL"
+elif [ -e "$hsl" ]; then
+    say "HSL: $(cat "$DIR/hsl/SOURCE" 2>/dev/null || echo "$hsl")"
+else
+    say "no HSL library: Ipopt will use MUMPS. For MA27, request the free licence at"
+    say "  $MA27_URL"
+    say "then run this script again with OPFSOLVE_HSL='<download link from the email>'"
 fi
 
 say "run it again with: $DIR/bin/opfsolve <case>... [options]   (see --help)"
 [ $install_only -eq 1 ] && exit 0
 
-# Output directory, as opfsolve will choose it, for the machine description.
+# --- solve --------------------------------------------------------------------
 out=opfsolve-results
 prev=""
 for a in "$@"; do
@@ -139,13 +203,14 @@ mkdir -p "$out"
     fi
     echo "opfsolve: $("$DIR/bin/opfsolve" --version)"
     echo "ipopt: $(cat "$DIR/ipopt/SOURCE" 2>/dev/null)"
+    echo "hsl: $(cat "$DIR/hsl/SOURCE" 2>/dev/null || echo none)"
     echo "command: opfsolve $*"
 } > "$out/system.txt"
 
 say "running: opfsolve $*"
 # Stream the output and keep a copy; POSIX sh has no pipefail, so the exit
 # status goes through a file.
-{ "$DIR/bin/opfsolve" "$@"; echo $? > "$out/.rc"; } 2>&1 | tee "$out/opfsolve.log"
+{ "$DIR/bin/opfsolve" "$@" && echo 0 > "$out/.rc" || echo $? > "$out/.rc"; } 2>&1 | tee "$out/opfsolve.log"
 rc=$(cat "$out/.rc"); rm -f "$out/.rc"
 say "results in $out: summary.csv, <case>/solution.json, <case>/ipopt.log, opfsolve.log, system.txt"
 exit "$rc"

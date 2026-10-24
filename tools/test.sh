@@ -14,7 +14,8 @@ for f in polar rect; do
     cat "$f/summary.csv"
     for c in pglib_opf_case14_ieee pglib_opf_case118_ieee; do
         grep -q '"termination_status": "LOCALLY_SOLVED"' "$f/$c/solution.json"
-        grep -qi "linear solver ma27" "$f/$c/ipopt.log"
+        # CI has no HSL licence, so Ipopt runs with MUMPS here.
+        grep -qi "linear solver mumps" "$f/$c/ipopt.log"
     done
 done
 # Objectives against the AC values in the PGLib-OPF README (5 significant digits).

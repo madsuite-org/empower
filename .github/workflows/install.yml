@@ -22,8 +22,6 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgfortran5 liblapack3 libblas3 libgomp1
       - name: One-line install and solve
         run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
       - name: Check results
@@ -69,15 +67,15 @@ jobs:
       matrix:
         include:
           - image: rockylinux:8
-            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
+            deps: dnf install -y tar
           - image: rockylinux:9
-            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
+            deps: dnf install -y tar
           - image: fedora:latest
-            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
+            deps: dnf install -y tar
           - image: debian:12
-            deps: apt-get update && apt-get install -y curl ca-certificates libgfortran5 liblapack3 libblas3 libgomp1
+            deps: apt-get update && apt-get install -y curl ca-certificates
           - image: ubuntu:20.04
-            deps: apt-get update && apt-get install -y curl ca-certificates libgfortran5 liblapack3 libblas3 libgomp1
+            deps: apt-get update && apt-get install -y curl ca-certificates
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
     steps:
