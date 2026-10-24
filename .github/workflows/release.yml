@@ -24,7 +24,7 @@ jobs:
     # AlmaLinux 8 (glibc 2.28), so the binary also runs on RHEL 8 and newer distributions.
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: System libraries for IDAES Ipopt
         run: dnf install -y libgfortran lapack blas libgomp
       - name: Install Julia
@@ -36,10 +36,10 @@ jobs:
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: exaacopf-${{ matrix.plat }}
-          path: exaacopf-${{ matrix.plat }}.tar.gz
+          name: opfsolve-${{ matrix.plat }}
+          path: opfsolve-${{ matrix.plat }}.tar.gz
 
   build-macos:
     name: ${{ matrix.plat }}
@@ -50,10 +50,10 @@ jobs:
           - plat: macos-aarch64
             runner: macos-14
           - plat: macos-x86_64
-            runner: macos-13
+            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: "1.12"
@@ -62,10 +62,10 @@ jobs:
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
-          name: exaacopf-${{ matrix.plat }}
-          path: exaacopf-${{ matrix.plat }}.tar.gz
+          name: opfsolve-${{ matrix.plat }}
+          path: opfsolve-${{ matrix.plat }}.tar.gz
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -74,7 +74,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true

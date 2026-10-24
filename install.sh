@@ -1,24 +1,24 @@
 #!/bin/sh
-# Install exaacopf (compiled ExaModelsPower AC OPF models + the IDAES build of
+# Install opfsolve (compiled ExaModelsPower AC OPF models + the IDAES build of
 # Ipopt) and solve AC OPF cases with it.
 #
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh -s -- case2000_goc --form=rect
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh -s -- all
+#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc --form=rect
+#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- all
 #
-# Arguments are passed to exaacopf (see `exaacopf --help`); with none, it solves
+# Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
 # pglib_opf_case118_ieee. Pass --install-only to stop after installing.
 #
 # Environment:
-#   EXAACOPF_DIR      install directory (default ./exaacopf)
-#   EXAACOPF_VERSION  release tag (default: latest)
-#   EXAACOPF_ARCHIVE  local release archive to install instead of downloading one
+#   OPFSOLVE_DIR      install directory (default ./opfsolve)
+#   OPFSOLVE_VERSION  release tag (default: latest)
+#   OPFSOLVE_ARCHIVE  local release archive to install instead of downloading one
 #   IDAES_VERSION     idaes-ext release tag (default 3.4.2)
 set -eu
 
-REPO="madsuite-org/exaacopf"
-DIR="${EXAACOPF_DIR:-$PWD/exaacopf}"
-VERSION="${EXAACOPF_VERSION:-latest}"
+REPO="madsuite-org/opfsolve"
+DIR="${OPFSOLVE_DIR:-$PWD/opfsolve}"
+VERSION="${OPFSOLVE_VERSION:-latest}"
 IDAES_VERSION="${IDAES_VERSION:-3.4.2}"
 
 say() { printf '==> %s\n' "$*"; }
@@ -72,24 +72,24 @@ esac
 say "platform: $plat"
 say "install directory: $DIR"
 
-if [ ! -x "$DIR/bin/exaacopf" ]; then
+if [ ! -x "$DIR/bin/opfsolve" ]; then
     mkdir -p "$DIR"
-    if [ -n "${EXAACOPF_ARCHIVE:-}" ]; then
-        say "installing exaacopf from $EXAACOPF_ARCHIVE"
-        tar xzf "$EXAACOPF_ARCHIVE" -C "$DIR" --strip-components 1
+    if [ -n "${OPFSOLVE_ARCHIVE:-}" ]; then
+        say "installing opfsolve from $OPFSOLVE_ARCHIVE"
+        tar xzf "$OPFSOLVE_ARCHIVE" -C "$DIR" --strip-components 1
     else
         if [ "$VERSION" = latest ]; then
-            url="https://github.com/$REPO/releases/latest/download/exaacopf-$plat.tar.gz"
+            url="https://github.com/$REPO/releases/latest/download/opfsolve-$plat.tar.gz"
         else
-            url="https://github.com/$REPO/releases/download/$VERSION/exaacopf-$plat.tar.gz"
+            url="https://github.com/$REPO/releases/download/$VERSION/opfsolve-$plat.tar.gz"
         fi
-        say "downloading exaacopf ($VERSION): $url"
+        say "downloading opfsolve ($VERSION): $url"
         curl -fSL --progress-bar "$url" | tar xz -C "$DIR" --strip-components 1 ||
-            die "no exaacopf release for $plat at $url"
+            die "no opfsolve release for $plat at $url"
     fi
-    say "installed $DIR/bin/exaacopf and the compiled model library $DIR/emp"
+    say "installed $DIR/bin/opfsolve and the compiled model library $DIR/emp"
 else
-    say "exaacopf already installed: $("$DIR/bin/exaacopf" --version)"
+    say "opfsolve already installed: $("$DIR/bin/opfsolve" --version)"
 fi
 
 if [ ! -e "$DIR/ipopt/$libipopt" ]; then
@@ -115,11 +115,11 @@ if [ "$os" = Linux ] && command -v ldd >/dev/null; then
     fi
 fi
 
-say "run it again with: $DIR/bin/exaacopf <case>... [options]   (see --help)"
+say "run it again with: $DIR/bin/opfsolve <case>... [options]   (see --help)"
 [ $install_only -eq 1 ] && exit 0
 
-# Output directory, as exaacopf will choose it, for the machine description.
-out=exaacopf-results
+# Output directory, as opfsolve will choose it, for the machine description.
+out=opfsolve-results
 prev=""
 for a in "$@"; do
     case "$a" in --output=*) out=${a#--output=} ;; esac
@@ -137,15 +137,15 @@ mkdir -p "$out"
         echo "cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
         echo "cores: $(sysctl -n hw.ncpu 2>/dev/null)"
     fi
-    echo "exaacopf: $("$DIR/bin/exaacopf" --version)"
+    echo "opfsolve: $("$DIR/bin/opfsolve" --version)"
     echo "ipopt: $(cat "$DIR/ipopt/SOURCE" 2>/dev/null)"
-    echo "command: exaacopf $*"
+    echo "command: opfsolve $*"
 } > "$out/system.txt"
 
-say "running: exaacopf $*"
+say "running: opfsolve $*"
 # Stream the output and keep a copy; POSIX sh has no pipefail, so the exit
 # status goes through a file.
-{ "$DIR/bin/exaacopf" "$@"; echo $? > "$out/.rc"; } 2>&1 | tee "$out/exaacopf.log"
+{ "$DIR/bin/opfsolve" "$@"; echo $? > "$out/.rc"; } 2>&1 | tee "$out/opfsolve.log"
 rc=$(cat "$out/.rc"); rm -f "$out/.rc"
-say "results in $out: summary.csv, <case>/solution.json, <case>/ipopt.log, exaacopf.log, system.txt"
+say "results in $out: summary.csv, <case>/solution.json, <case>/ipopt.log, opfsolve.log, system.txt"
 exit "$rc"

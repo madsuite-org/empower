@@ -6,10 +6,10 @@ cd "$(dirname "$0")/.."
 root=$(pwd)
 t=$(mktemp -d)
 cd "$t"
-export EXAACOPF_DIR="$t/exaacopf" EXAACOPF_ARCHIVE="$root/exaacopf-$plat.tar.gz"
+export OPFSOLVE_DIR="$t/opfsolve" OPFSOLVE_ARCHIVE="$root/opfsolve-$plat.tar.gz"
 sh "$root/install.sh" case14_ieee case118_ieee --form=polar --options="tol=1e-8 max_iter=500" --output=polar
 sh "$root/install.sh" case14_ieee case118_ieee --form=rect --output=rect
-"$EXAACOPF_DIR/bin/exaacopf" --help > /dev/null
+"$OPFSOLVE_DIR/bin/opfsolve" --help > /dev/null
 for f in polar rect; do
     cat "$f/summary.csv"
     for c in pglib_opf_case14_ieee pglib_opf_case118_ieee; do

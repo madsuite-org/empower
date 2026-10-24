@@ -1,6 +1,6 @@
 name: Install
 
-# Runs the published one-line installer, then exaacopf, on each supported
+# Runs the published one-line installer, then opfsolve, on each supported
 # platform against the latest release.
 on:
   release:
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-13, macos-14, macos-15]
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     steps:
       - if: runner.os == 'Linux'
@@ -27,17 +27,17 @@ jobs:
         run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
       - name: Check results
         run: |
-          cat exaacopf-results/summary.csv exaacopf-results/system.txt
-          test "$(grep -c LOCALLY_SOLVED exaacopf-results/summary.csv)" = 2
+          cat opfsolve-results/summary.csv opfsolve-results/system.txt
+          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
       - name: Command after install
         run: |
-          exaacopf/bin/exaacopf case30_ieee --form=rect --options="tol=1e-8" --output=again
+          opfsolve/bin/opfsolve case30_ieee --form=rect --options="tol=1e-8" --output=again
           grep -q LOCALLY_SOLVED again/summary.csv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: results-${{ matrix.runner }}
-          path: exaacopf-results
+          path: opfsolve-results
 
   container:
     name: ${{ matrix.image }}
@@ -62,5 +62,5 @@ jobs:
       - name: One-line install and solve
         run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
       - run: |
-          cat exaacopf-results/summary.csv
-          test "$(grep -c LOCALLY_SOLVED exaacopf-results/summary.csv)" = 2
+          cat opfsolve-results/summary.csv
+          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2

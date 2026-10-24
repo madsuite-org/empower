@@ -1,44 +1,44 @@
-# exaacopf
+# opfsolve
 
 Solve AC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time, and Ipopt. No Julia installation is needed.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 ```
 
-The script installs into `./exaacopf`:
+The script installs into `./opfsolve`:
 
-- `bin/exaacopf` and the compiled ExaModelsPower model library for your platform,
+- `bin/opfsolve` and the compiled ExaModelsPower model library for your platform,
 - the [IDAES](https://github.com/IDAES/idaes-ext) build of Ipopt, which includes the HSL MA27 linear solver,
 
-then solves `pglib_opf_case118_ieee` from [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf). Arguments after `sh -s --` go to `exaacopf`:
+then solves `pglib_opf_case118_ieee` from [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf). Arguments after `sh -s --` go to `opfsolve`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh -s -- case2000_goc case9241_pegase --form=rect
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh -s -- all
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/exaacopf/main/install.sh | sh -s -- --install-only
+curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc case9241_pegase --form=rect
+curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- all
+curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --install-only
 ```
 
 ## Usage
 
 ```
-exaacopf <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE ..."] [--output=DIR]
+opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE ..."] [--output=DIR]
 ```
 
 | Argument | Meaning |
 |---|---|
-| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded into `exaacopf/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
+| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `opfsolve/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
 | `--form` | Voltage formulation: `polar` (default) or `rect`. |
 | `--solver` | `ipopt` (default, and the only solver in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500 linear_solver=mumps"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The default linear solver is `ma27`. |
-| `--output` | Output directory (default `./exaacopf-results`). |
+| `--output` | Output directory (default `./opfsolve-results`). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.13 or later) or model library. |
 
 ```sh
-exaacopf/bin/exaacopf case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options="tol=1e-8"
+opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options="tol=1e-8"
 ```
 
-`exaacopf` prints each step with its elapsed time (downloading, parsing the case and building the model, setting up Ipopt, solving, writing the output), with the full Ipopt log in between.
+`opfsolve` prints each step with its elapsed time (downloading, parsing the case and building the model, setting up Ipopt, solving, writing the output), with the full Ipopt log in between.
 
 ## Output
 
@@ -47,7 +47,7 @@ exaacopf/bin/exaacopf case14_ieee case118_ieee mycase.m --form=polar --solver=ip
 | `summary.csv` | One row per case: termination status, objective, iterations, problem size, and the time to parse and build the model and to solve (split into model callbacks and Ipopt). |
 | `<case>/solution.json` | The result in the layout PowerModels.jl uses: `termination_status`, `primal_status`, `objective`, `solve_time`, and `solution` with `bus` (`vm`, `va`), `gen` (`pg`, `qg`), and `branch` (`pf`, `qf`, `pt`, `qt`) in per unit, keyed by MATPOWER bus number and by generator and branch row. Out-of-service components are omitted. Ipopt's constraint multipliers are under `constraint_multipliers`, by model constraint block. |
 | `<case>/ipopt.log` | Full Ipopt output. |
-| `exaacopf.log`, `system.txt` | Written by `install.sh`: the console output, and the date, OS, CPU, and versions used. |
+| `opfsolve.log`, `system.txt` | Written by `install.sh`: the console output, and the date, OS, CPU, and versions used. |
 
 ## Platforms
 
@@ -66,9 +66,22 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 ## How it is built
 
 - `emp/lib/libemp.so` (`.dylib` on macOS) holds the ExaModelsPower recipes `acp` (polar) and `acr` (rectangular), compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
-- `bin/exaacopf` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
+- `bin/opfsolve` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
 
-`tools/build.sh <plat>` builds `exaacopf-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. The `Install` workflow runs the one-line installer against the latest release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 13 to 15, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04.
+`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. The `Install` workflow runs the one-line installer against the latest release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15 (arm64) and macOS 15 (x86_64), Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04.
+
+## Citation
+
+`opfsolve` combines four components. If you use it in published work, please cite each of them; the BibTeX entries are in [`CITATION.bib`](CITATION.bib).
+
+| Component | What it provides | Cite |
+|---|---|---|
+| Algebraic modeling system | [ExaModels.jl](https://github.com/madsuite-org/ExaModels.jl), through [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl): the model and its derivatives | Shin, Anitescu, and Pacaud, "Accelerating optimal power flow with GPUs: SIMD abstraction of nonlinear programs and condensed-space interior-point methods," *Electric Power Systems Research* 236, 110651, 2024 |
+| Solver | [Ipopt](https://github.com/coin-or/Ipopt), IDAES build | Wächter and Biegler, "On the implementation of a primal-dual interior point filter line search algorithm for large-scale nonlinear programming," *Mathematical Programming* 106(1), 25–57, 2006 |
+| Problem formulation | The AC OPF problem formulation, as defined in [PowerModels.jl](https://github.com/lanl-ansi/PowerModels.jl) | Coffrin, Bent, Sundar, Ng, and Lubin, "PowerModels.jl: An Open-Source Framework for Exploring Power Flow Formulations," PSCC 2018 |
+| Data | [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf) v23.07 | Babaeinejadsarookolaee et al., "The Power Grid Library for Benchmarking AC Optimal Power Flow Algorithms," arXiv:1908.02788, 2019; also the source documents named in each case file header |
+
+PGLib-OPF asks that the version be stated, since the library changes between releases; `opfsolve` downloads v23.07.
 
 ## Acknowledgement
 

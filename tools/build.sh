@@ -1,7 +1,7 @@
 #!/bin/sh
-# Build exaacopf-<plat>.tar.gz:
-#   exaacopf/bin/exaacopf       C driver: loads the model library and Ipopt at run time
-#   exaacopf/emp/lib/libemp.*   ExaModelsPower AC OPF recipes acp (polar) and acr
+# Build opfsolve-<plat>.tar.gz:
+#   opfsolve/bin/opfsolve       C driver: loads the model library and Ipopt at run time
+#   opfsolve/emp/lib/libemp.*   ExaModelsPower AC OPF recipes acp (polar) and acr
 #                               (rectangular), compiled by ExaModelsCompiler.compile_all
 #                               with juliac --trim=safe, plus a private Julia runtime
 set -eu
@@ -17,9 +17,9 @@ fi
 julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
 
 rm -rf stage
-mkdir -p stage/exaacopf/bin
-julia --startup-file=no --project=compile compile/compile.jl stage/exaacopf/emp
-cc -O2 -Wall -o stage/exaacopf/bin/exaacopf driver/exaacopf.c -ldl -lm
-cp LICENSE README.md stage/exaacopf/
-tar czf "exaacopf-$plat.tar.gz" -C stage exaacopf
-ls -la "exaacopf-$plat.tar.gz"
+mkdir -p stage/opfsolve/bin
+julia --startup-file=no --project=compile compile/compile.jl stage/opfsolve/emp
+cc -O2 -Wall -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm
+cp LICENSE README.md stage/opfsolve/
+tar czf "opfsolve-$plat.tar.gz" -C stage opfsolve
+ls -la "opfsolve-$plat.tar.gz"

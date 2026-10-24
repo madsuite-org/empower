@@ -1,5 +1,5 @@
 /*
- * exaacopf: solve AC optimal power flow cases with a compiled ExaModelsPower
+ * opfsolve: solve AC optimal power flow cases with a compiled ExaModelsPower
  * model library (cnlp ABI v0.1) and any Ipopt shared library (>= 3.13).
  *
  * Both libraries are loaded at run time, so the same driver works with the
@@ -27,8 +27,9 @@
 #endif
 
 #define VERSION "0.1.0"
-#define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/master"
-#define PGLIB_TGZ "https://github.com/power-grid-lib/pglib-opf/archive/refs/heads/master.tar.gz"
+#define PGLIB_VERSION "23.07"
+#define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
+#define PGLIB_TGZ "https://github.com/power-grid-lib/pglib-opf/archive/refs/tags/v" PGLIB_VERSION ".tar.gz"
 
 extern char **environ;
 
@@ -106,7 +107,7 @@ static int run(char *const args[]) {
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
-/* Release layout: <root>/bin/exaacopf, <root>/emp/lib/libemp.<ext>,
+/* Release layout: <root>/bin/opfsolve, <root>/emp/lib/libemp.<ext>,
  * <root>/ipopt/libipopt.<ext> (placed by install.sh), <root>/cases/. */
 static char root[4096];
 
@@ -140,7 +141,7 @@ static const char *under_root(const char *rel) {
 
 static const char *case_dir(void) {
     static char dir[8192];
-    const char *env = getenv("EXAACOPF_CASES");
+    const char *env = getenv("OPFSOLVE_CASES");
     if (env) snprintf(dir, sizeof dir, "%s", env);
     else if (*root) snprintf(dir, sizeof dir, "%s/cases", root);
     else snprintf(dir, sizeof dir, "cases");
@@ -489,8 +490,10 @@ static int cmpcase(const void *a, const void *b) {
 static void add_all(List *cases) {
     const char *cd = case_dir();
     char dir[8300];
-    snprintf(dir, sizeof dir, "%s/pglib-opf-master", cd);
-    if (access(dir, R_OK) != 0) {
+    snprintf(dir, sizeof dir, "%s/pglib-opf-" PGLIB_VERSION, cd);
+    char marker[8400];
+    snprintf(marker, sizeof marker, "%s/BASELINE.md", dir);
+    if (access(marker, R_OK) != 0) {
         step("downloading the PGLib-OPF library: %s", PGLIB_TGZ);
         char cmd[9000];
         snprintf(cmd, sizeof cmd, "curl -fsSL '%s' | tar xz -C '%s'", PGLIB_TGZ, cd);
@@ -530,9 +533,10 @@ static int resolve_case(const char *c, char *path, size_t cap) {
     size_t L = strlen(name);
     if (L > 2 && !strcmp(name + L - 2, ".m")) name[L - 2] = 0;
     const char *cd = case_dir();
-    snprintf(path, cap, "%s/pglib-opf-master/%s.m", cd, name);
-    if (access(path, R_OK) == 0) return 0;
-    snprintf(path, cap, "%s/%s.m", cd, name);
+    /* One directory per PGLib-OPF release, shared with "all". */
+    snprintf(path, cap, "%s/pglib-opf-" PGLIB_VERSION, cd);
+    mkdir(path, 0755);
+    snprintf(path, cap, "%s/pglib-opf-" PGLIB_VERSION "/%s.m", cd, name);
     if (access(path, R_OK) == 0) {
         step("using cached case %s", path);
         return 0;
@@ -703,7 +707,7 @@ static void write_solution(const char *path, const char *casefile, Ctx *C, Model
     fputs("  \"case\": ", f); json_str(f, casefile);
     fputs(",\n  \"form\": ", f); json_str(f, C->form);
     fputs(",\n  \"solver\": \"ipopt\"", f);
-    fputs(",\n  \"exaacopf_version\": \"" VERSION "\"", f);
+    fputs(",\n  \"opfsolve_version\": \"" VERSION "\"", f);
     fprintf(f, ",\n  \"termination_status\": \"%s\"", termination_status(r->status));
     fprintf(f, ",\n  \"primal_status\": \"%s\"", primal_status(r->status));
     fprintf(f, ",\n  \"raw_status\": \"%s\"", status_name(r->status));
@@ -811,21 +815,21 @@ static void write_solution(const char *path, const char *casefile, Ctx *C, Model
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
-    "usage: exaacopf <case>... [--form=polar|rect] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
+    "usage: opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC optimal power flow problem for one or more MATPOWER cases.\n"
     "\n"
     "  <case>       a MATPOWER file, or a PGLib-OPF case name (case118_ieee,\n"
     "               pglib_opf_case118_ieee.m), downloaded on first use; \"all\" solves\n"
-    "               every PGLib-OPF case for typical operating conditions\n"
+    "               every PGLib-OPF v" PGLIB_VERSION " case for typical operating conditions\n"
     "  --form       voltage formulation: polar (default) or rect\n"
     "  --solver     ipopt (default; the only solver in this release)\n"
     "  --options    solver options separated by spaces or commas,\n"
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
-    "  --output     output directory (default ./exaacopf-results)\n"
-    "  --ipopt-lib  Ipopt shared library (default <install>/ipopt, or $EXAACOPF_IPOPT_LIB)\n"
+    "  --output     output directory (default ./opfsolve-results)\n"
+    "  --ipopt-lib  Ipopt shared library (default <install>/ipopt, or $OPFSOLVE_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
@@ -846,8 +850,8 @@ static const char *flag(const char *a, const char *name, int *i, int argc, char 
 int main(int argc, char **argv) {
     t_start = now();
     find_root();
-    const char *modellib = getenv("EXAACOPF_MODEL_LIB"), *ipoptlib = getenv("EXAACOPF_IPOPT_LIB"),
-               *form = "polar", *solver = "ipopt", *out = "exaacopf-results", *v;
+    const char *modellib = getenv("OPFSOLVE_MODEL_LIB"), *ipoptlib = getenv("OPFSOLVE_IPOPT_LIB"),
+               *form = "polar", *solver = "ipopt", *out = "opfsolve-results", *v;
     List args = {0};
 
     for (int i = 1; i < argc; i++) {
@@ -856,7 +860,7 @@ int main(int argc, char **argv) {
             fputs(usage, stdout);
             return 0;
         } else if (!strcmp(a, "--version")) {
-            puts("exaacopf " VERSION);
+            puts("opfsolve " VERSION);
             return 0;
         }
         if ((v = flag(a, "--form", &i, argc, argv))) form = v;
@@ -876,11 +880,11 @@ int main(int argc, char **argv) {
     else die("--form must be polar or rect, got %s", form);
     if (strcmp(solver, "ipopt")) die("--solver must be ipopt, got %s", solver);
     if (!modellib) modellib = under_root("emp/lib/libemp." LIBEXT);
-    if (!modellib) die("no model library: pass --model-lib or set EXAACOPF_MODEL_LIB");
+    if (!modellib) die("no model library: pass --model-lib or set OPFSOLVE_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root("ipopt/libipopt." LIBEXT);
-    if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set EXAACOPF_IPOPT_LIB");
+    if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set OPFSOLVE_IPOPT_LIB");
 
-    printf("exaacopf %s\n  form:          %s\n  solver:        %s\n  model library: %s\n"
+    printf("opfsolve %s\n  form:          %s\n  solver:        %s\n  model library: %s\n"
            "  Ipopt library: %s\n  output:        %s\n",
            VERSION, form, solver, modellib, ipoptlib, out);
     for (int k = 0; k < nopts; k++) printf("  option:        %s\n", opts[k]);
