@@ -75,7 +75,7 @@ On Linux, the IDAES Ipopt build uses the system Fortran runtime and LAPACK; if t
 
 ```sh
 sudo apt-get install libgfortran5 liblapack3 libblas3 libgomp1   # Debian, Ubuntu
-sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
+sudo dnf install libgfortran libquadmath lapack blas libgomp     # RHEL, Fedora
 ```
 
 ## How it is built

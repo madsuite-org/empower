@@ -4,6 +4,9 @@ $root = Split-Path -Parent $PSScriptRoot
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ("opfsolve-test-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $t | Out-Null
 Set-Location $t
+# Run as on a machine without Julia: the build job has Julia on PATH, which would
+# hide a runtime DLL that the archive fails to provide.
+$env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'julia' }) -join ';'
 $env:OPFSOLVE_DIR = Join-Path $t 'opfsolve'
 $env:OPFSOLVE_ARCHIVE = Join-Path $root 'opfsolve-windows-x86_64.tar.gz'
 

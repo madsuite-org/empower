@@ -69,11 +69,11 @@ jobs:
       matrix:
         include:
           - image: rockylinux:8
-            deps: dnf install -y libgfortran lapack blas libgomp
+            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
           - image: rockylinux:9
-            deps: dnf install -y libgfortran lapack blas libgomp
+            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
           - image: fedora:latest
-            deps: dnf install -y libgfortran lapack blas libgomp
+            deps: dnf install -y libgfortran libquadmath lapack blas libgomp
           - image: debian:12
             deps: apt-get update && apt-get install -y curl ca-certificates libgfortran5 liblapack3 libblas3 libgomp1
           - image: ubuntu:20.04

@@ -1023,6 +1023,34 @@ int main(int argc, char **argv) {
         else push(&cases, args.v[i]);
     }
 
+    /* ExaModelsPower's __init__ otherwise creates a data directory next to its
+     * source as it was at compile time, a path that only exists on the build
+     * machine. */
+    if (!getenv("EXA_MODELS_DEPOT")) {
+#ifdef _WIN32
+        _putenv_s("EXA_MODELS_DEPOT", case_dir());
+#else
+        setenv("EXA_MODELS_DEPOT", case_dir(), 1);
+#endif
+    }
+#ifdef _WIN32
+    /* The Julia runtime loads some of its DLLs by name after startup (libpcre2-8,
+     * for one); let Windows find them next to the model library. */
+    {
+        char dir[8192];
+        if (_fullpath(dir, modellib, sizeof dir)) {
+            char *sep = last_sep(dir);
+            if (sep) *sep = 0;
+            SetDllDirectoryA(dir);
+            const char *path = getenv("PATH");
+            size_t L = strlen(dir) + (path ? strlen(path) : 0) + 2;
+            char *np = xmalloc(L);
+            snprintf(np, L, "%s;%s", dir, path ? path : "");
+            _putenv_s("PATH", np);
+        }
+    }
+#endif
+
     /* Loading the model library starts its bundled Julia runtime. */
     step("loading model library");
     double t0 = now();
