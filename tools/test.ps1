@@ -33,3 +33,5 @@ foreach ($f in 'polar', 'rect') {
 }
 if ($bad) { exit 1 }
 Write-Host 'all checks passed'
+# The deliberate no-MA27 run left a nonzero $LASTEXITCODE, which the CI wrapper would report.
+exit 0
