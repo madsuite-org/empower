@@ -101,3 +101,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*.tar.gz
+
+  install:
+    needs: release
+    uses: ./.github/workflows/install.yml

@@ -3,8 +3,9 @@ name: Install
 # Runs the published one-line installer, then opfsolve, on each supported
 # platform against the latest release.
 on:
-  release:
-    types: [published]
+  # Called by the Release workflow once a release is published: a release
+  # created with GITHUB_TOKEN does not trigger the `release` event.
+  workflow_call:
   push:
     branches: [main]
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
