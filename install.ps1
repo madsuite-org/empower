@@ -168,6 +168,7 @@ if ($env:OPFSOLVE_HSL_LIB) {
     Say '  2. HSL emails you a download link (valid for 7 days)'
     $link = ''
     if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        try { Start-Process $Ma27Url; Say 'opened the request page in your browser' } catch { }
         $link = Read-Host '==> paste the download link (or a path to the package or an HSL library)'
     }
     if (-not $link) { Fail "no HSL download link. Rerun with `$env:OPFSOLVE_HSL='<download link from the email>'" }

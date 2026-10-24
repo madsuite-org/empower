@@ -78,7 +78,7 @@ opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ip
 opfsolve requires MA27. Its licence is free for personal use, but `opfsolve` never distributes it, so each user downloads it:
 
 1. Request the free personal licence for MA27 at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/. HSL emails a download link, valid for 7 days.
-2. Run the installer and paste the link when it asks, or pass it in `OPFSOLVE_HSL`. The installer downloads the package, installs a Fortran compiler from conda-forge, compiles MA27 with `-O3` on your machine into `opfsolve/hsl/`, and removes the compiler again:
+2. Run the installer. Without `OPFSOLVE_HSL`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link in `OPFSOLVE_HSL`. The installer downloads the package, installs a Fortran compiler from conda-forge, compiles MA27 with `-O3` on your machine into `opfsolve/hsl/`, and removes the compiler again:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | OPFSOLVE_HSL='<download link>' sh

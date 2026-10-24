@@ -199,6 +199,13 @@ else
     link=""
     # Opening /dev/tty without a controlling terminal is fatal in some shells; test in a subshell.
     if (: < /dev/tty) 2>/dev/null; then
+        # Open the request page for the user; on a machine without a desktop (ssh,
+        # a server) the URL above is all there is.
+        if [ "$os" = Darwin ]; then
+            open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
+        elif { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v xdg-open >/dev/null; then
+            xdg-open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
+        fi
         printf '==> paste the download link (or a path to the package or an HSL library): ' > /dev/tty
         read -r link < /dev/tty || link=""
     fi
