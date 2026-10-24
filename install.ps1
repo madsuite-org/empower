@@ -143,6 +143,8 @@ function Build-Hsl($src) {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $HslLib)) { Fail 'compiling MA27 failed' }
     "built from $($top.Name) on $((Get-Date).ToString('yyyy-MM-dd')) with $((& $fc.FullName --version)[0])" | Set-Content (Join-Path $HslDir 'SOURCE')
     Remove-Item -Recurse -Force $work
+    # Drop the compiler's packages from micromamba's cache; Ipopt keeps what it uses.
+    Invoke-Mamba clean -a -y -q | Out-Null
     Say "installed $HslLib"
 }
 

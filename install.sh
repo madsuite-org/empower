@@ -135,8 +135,11 @@ build_hsl() {
         *) die "the HSL package is neither .tar.gz nor .zip (an expired or already used download link returns a web page)" ;;
     esac
     top=$(find "$work" -mindepth 1 -maxdepth 1 -type d | head -1)
-    say "installing a Fortran compiler from conda-forge to build HSL"
-    mamba create -y -q -p "$work/tools" -c conda-forge --override-channels gfortran meson ninja pkg-config >/dev/null ||
+    # Coin-HSL builds with meson; the standalone MA27 package needs only gfortran.
+    tools=gfortran
+    [ -f "$top/meson.build" ] && tools="gfortran meson ninja pkg-config"
+    say "installing a Fortran compiler from conda-forge to build HSL ($tools)"
+    mamba create -y -q -p "$work/tools" -c conda-forge --override-channels $tools >/dev/null ||
         die "could not install the Fortran compiler"
     fc=$(ls "$work"/tools/bin/*gfortran | head -1)
     mkdir -p "$DIR/hsl"
@@ -160,6 +163,8 @@ build_hsl() {
     fi
     echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $("$fc" --version | head -1)" > "$DIR/hsl/SOURCE"
     rm -rf "$work"
+    # Drop the compiler's packages from micromamba's cache; Ipopt keeps what it uses.
+    mamba clean -a -y -q >/dev/null 2>&1 || true
     say "installed $hsl"
 }
 
