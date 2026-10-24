@@ -30,7 +30,7 @@ opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE .
 | `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `opfsolve/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
 | `--form` | Voltage formulation: `polar` (default) or `rect`. |
 | `--solver` | `ipopt` (default, and the only solver in this release). |
-| `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500 linear_solver=mumps"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The default linear solver is `ma27`. |
+| `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500 linear_solver=mumps"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The default linear solver is `ma27`, or `mumps` if the Ipopt library has no HSL. |
 | `--output` | Output directory (default `./opfsolve-results`). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.13 or later) or model library. |
 
@@ -82,6 +82,10 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 | Data | [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf) v23.07 | Babaeinejadsarookolaee et al., "The Power Grid Library for Benchmarking AC Optimal Power Flow Algorithms," arXiv:1908.02788, 2019; also the source documents named in each case file header |
 
 PGLib-OPF asks that the version be stated, since the library changes between releases; `opfsolve` downloads v23.07.
+
+## HSL
+
+The release archives of `opfsolve` contain no HSL code. `install.sh` downloads Ipopt directly from the [IDAES idaes-ext releases](https://github.com/IDAES/idaes-ext/releases), as `idaes get-extensions` does. IDAES states that the National Energy Technology Laboratory (NETL) has obtained a distribution license for the HSL linear solvers that allows their inclusion in IDAES's compiled Ipopt ([IDAES binary packages](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)). The IDAES macOS x86_64 build has no HSL; there `opfsolve` uses MUMPS. Any Ipopt can be used instead with `--ipopt-lib`, for example one built against your own [HSL licence](https://hsl.rl.ac.uk/licensing.html).
 
 ## Acknowledgement
 

@@ -577,7 +577,7 @@ static char *slurp(const char *path) {
 /* ----------------------------------------------------------------- solving */
 
 typedef struct {
-    const char *form, *model;
+    const char *form, *model, *linear_solver;
     Ipopt I;
     void *hm;
     FILE *summary;
@@ -633,7 +633,7 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     if (I->intermediate) I->intermediate(P, on_iter);
     snprintf(path, sizeof path, "%s/ipopt.log", out);
     I->out_file(P, path, 5);
-    I->str_opt(P, "linear_solver", "ma27");
+    I->str_opt(P, "linear_solver", C->linear_solver);
     for (int k = 0; k < nopts; k++) {
         char key[512];
         const char *eq = strchr(opts[k], '=');
@@ -915,6 +915,13 @@ int main(int argc, char **argv) {
     C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
     C.I.intermediate = dlsym(hi, "SetIntermediateCallback");
     step("Ipopt loaded (%.3f s)", now() - t0);
+    /* HSL is absent from some Ipopt builds (IDAES macOS x86_64, most conda builds). */
+    C.linear_solver = (dlsym(hi, "ma27ad_") || dlsym(hi, "ma27ad")) ? "ma27" : "mumps";
+    for (int k = 0; k < nopts; k++)
+        if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
+    step("linear solver: %s%s", C.linear_solver,
+         strcmp(C.linear_solver, "mumps") || (dlsym(hi, "ma27ad_") || dlsym(hi, "ma27ad"))
+             ? "" : " (this Ipopt has no HSL MA27)");
 
     mkdir(out, 0755);
     char path[8192];
