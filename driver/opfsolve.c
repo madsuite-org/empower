@@ -49,7 +49,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.4.2"
+#define VERSION "0.4.3"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
@@ -365,22 +365,11 @@ static Bool eval_h(int n, double *x, Bool nx, double sigma, int m, double *y, Bo
     if (!v) return M->hess_structure(M->id, ir, jc) == 0;
     TIMED(M, nhev, thev, M->hess(M->id, x, y, sigma, v));
 }
-static int verbose = 0;
-
-/* Unless --verbose, opfsolve prints its own compact iteration table; Ipopt's full
- * output goes to ipopt.log. */
 static Bool on_iter(int alg, int iter, double f, double pr, double du, double mu, double d,
                     double reg, double adu, double apr, int ls, void *u) {
-    (void)d; (void)reg; (void)ls;
+    (void)alg; (void)f; (void)pr; (void)du; (void)mu; (void)d; (void)reg; (void)adu;
+    (void)apr; (void)ls;
     ((Model *)u)->iters = iter;
-    if (!verbose) {
-        if (iter == 0)
-            printf("              %5s  %15s  %9s  %9s  %6s  %9s  %9s\n", "iter", "objective",
-                   "inf_pr", "inf_du", "lg(mu)", "alpha_du", "alpha_pr");
-        printf("              %4d%c  %15.8e  %9.2e  %9.2e  %6.1f  %9.2e  %9.2e\n", iter,
-               alg ? 'r' : ' ', f, pr, du, mu > 0 ? log10(mu) : -INFINITY, adu, apr);
-        fflush(stdout);
-    }
     return 1;
 }
 
@@ -739,10 +728,6 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     I->out_file(P, path, 5);
     if (C->hsllib) I->str_opt(P, "hsllib", C->hsllib);
     I->str_opt(P, "linear_solver", C->linear_solver);
-    if (!verbose) {
-        I->int_opt(P, "print_level", 0);   /* the console; ipopt.log keeps level 5 */
-        I->str_opt(P, "sb", "yes");
-    }
     for (int k = 0; k < nopts; k++) {
         char key[512];
         const char *eq = strchr(opts[k], '=');
@@ -760,13 +745,13 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     }
 
     step("solving with Ipopt, %s", C->linear_solver);
-    if (verbose) printf("\n");
+    printf("\n");
     fflush(stdout);
     t0 = now();
     r->status = I->solve(P, x, g, &r->obj, y, zl, zu, &M);
     r->t_solve = now() - t0;
     fflush(stdout);
-    if (verbose) printf("\n");
+    printf("\n");
     r->iters = M.iters;
     r->t_cb = M.tfev + M.tgev + M.tconsev + M.tjev + M.thev;
     step("%s: objective %.10g, %d iterations, %.3f s (%.3f s in model callbacks)",
@@ -1055,7 +1040,6 @@ static const char *usage =
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
     "               $OPFSOLVE_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
-    "  --verbose    print Ipopt's full output (it always goes to <case>/ipopt.log)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
     "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv;\n"
@@ -1092,7 +1076,6 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(a, "--check-hsl")) { check_hsl = 1; continue; }
-        if (!strcmp(a, "--verbose")) { verbose = 1; continue; }
         if ((v = flag(a, "--form", &i, argc, argv))) form = v;
         else if ((v = flag(a, "--solver", &i, argc, argv))) solver = v;
         else if ((v = flag(a, "--options", &i, argc, argv))) parse_options(v);

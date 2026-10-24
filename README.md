@@ -45,7 +45,6 @@ opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE .
 | `--solver` | `ipopt` (default, and the only solver in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The linear solver is `ma27`; with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. |
 | `--output` | Output directory (default `./opfsolve-results`). |
-| `--verbose` | Print Ipopt's full output; by default opfsolve prints a compact iteration table, and the full output goes to `<case>/ipopt.log`. |
 | `--hsl-lib` | HSL library to use (default `~/.opfsolve/hsl`, or `OPFSOLVE_HSL_LIB`). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
