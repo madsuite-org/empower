@@ -1,0 +1,11 @@
+[deps]
+ExaModels = "1037b233-b668-4ce9-9b63-f9f681f55dd2"
+ExaModelsCompiler = "3d1e9a26-5b74-4f0c-9a2b-7c8f4e11d3a7"
+ExaModelsPower = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
+JuliaC = "acedd4c2-ced6-4a15-accc-2607eb759ba2"
+PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+
+[sources]
+ExaModels = {rev = "a9fbf9ccb5afcfb973bc09ed10d7e6b5f24e07a3", url = "https://github.com/madsuite-org/ExaModels.jl.git"}
+ExaModelsCompiler = {rev = "a9fbf9ccb5afcfb973bc09ed10d7e6b5f24e07a3", subdir = "ExaModelsCompiler", url = "https://github.com/madsuite-org/ExaModels.jl.git"}
+ExaModelsPower = {rev = "e0ba41dd6d4377e31a68d352521dbb6d9e0194d0", url = "https://github.com/madsuite-org/ExaModelsPower.jl.git"}

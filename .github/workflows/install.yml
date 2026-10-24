@@ -1,0 +1,66 @@
+name: Install
+
+# Runs the published one-line installer, then exaacopf, on each supported
+# platform against the latest release.
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths: [install.sh, .github/workflows/install.yml]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-13, macos-14, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgfortran5 liblapack3 libblas3 libgomp1
+      - name: One-line install and solve
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+      - name: Check results
+        run: |
+          cat exaacopf-results/summary.csv exaacopf-results/system.txt
+          test "$(grep -c LOCALLY_SOLVED exaacopf-results/summary.csv)" = 2
+      - name: Command after install
+        run: |
+          exaacopf/bin/exaacopf case30_ieee --form=rect --options="tol=1e-8" --output=again
+          grep -q LOCALLY_SOLVED again/summary.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.runner }}
+          path: exaacopf-results
+
+  container:
+    name: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: rockylinux:8
+            deps: dnf install -y libgfortran lapack blas libgomp
+          - image: rockylinux:9
+            deps: dnf install -y libgfortran lapack blas libgomp
+          - image: fedora:latest
+            deps: dnf install -y libgfortran lapack blas libgomp
+          - image: debian:12
+            deps: apt-get update && apt-get install -y curl ca-certificates libgfortran5 liblapack3 libblas3 libgomp1
+          - image: ubuntu:20.04
+            deps: apt-get update && apt-get install -y curl ca-certificates libgfortran5 liblapack3 libblas3 libgomp1
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - run: ${{ matrix.deps }}
+      - name: One-line install and solve
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+      - run: |
+          cat exaacopf-results/summary.csv
+          test "$(grep -c LOCALLY_SOLVED exaacopf-results/summary.csv)" = 2

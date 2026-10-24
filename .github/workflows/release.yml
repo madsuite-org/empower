@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: ${{ matrix.plat }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plat: linux-x86_64
+            runner: ubuntu-latest
+            image: quay.io/pypa/manylinux_2_28_x86_64
+          - plat: linux-aarch64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux_2_28_aarch64
+    runs-on: ${{ matrix.runner }}
+    # AlmaLinux 8 (glibc 2.28), so the binary also runs on RHEL 8 and newer distributions.
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries for IDAES Ipopt
+        run: dnf install -y libgfortran lapack blas libgomp
+      - name: Install Julia
+        run: |
+          curl -fsSL https://install.julialang.org | sh -s -- --yes --default-channel 1.12
+          echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: tools/build.sh "${{ matrix.plat }}"
+      - name: Test
+        run: tools/test.sh "${{ matrix.plat }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exaacopf-${{ matrix.plat }}
+          path: exaacopf-${{ matrix.plat }}.tar.gz
+
+  build-macos:
+    name: ${{ matrix.plat }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plat: macos-aarch64
+            runner: macos-14
+          - plat: macos-x86_64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: tools/build.sh "${{ matrix.plat }}"
+      - name: Test
+        run: tools/test.sh "${{ matrix.plat }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exaacopf-${{ matrix.plat }}
+          path: exaacopf-${{ matrix.plat }}.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
