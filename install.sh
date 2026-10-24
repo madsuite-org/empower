@@ -10,20 +10,22 @@
 # Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
 # pglib_opf_case118_ieee. Pass --install-only to stop after installing.
 #
-# HSL (MA27). opfsolve never distributes HSL. Without it Ipopt uses MUMPS. To use
-# MA27, request the free personal licence at
+# HSL MA27 is required, and opfsolve never distributes it. Request the free
+# personal licence at
 #   https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
-# and either
-#   OPFSOLVE_HSL=<download link from the email, or the downloaded .tar.gz/.zip>
-#       to have this script compile it, optimized, on this machine, or
+# HSL emails a download link. The script asks for it, or takes it from
+#   OPFSOLVE_HSL=<download link, or the downloaded .tar.gz/.zip>
+#       compiled, optimized, on this machine; or
 #   OPFSOLVE_HSL_LIB=<path to an HSL library you already have (libhsl, libcoinhsl, HSL_jll)>
-#       to use that library as is.
+#       used as is.
 #
 # Environment:
 #   OPFSOLVE_DIR      install directory (default ./opfsolve)
 #   OPFSOLVE_VERSION  release tag (default: latest)
 #   OPFSOLVE_ARCHIVE  local release archive to install instead of downloading one
 #   OPFSOLVE_HSL, OPFSOLVE_HSL_LIB   see above
+#   OPFSOLVE_SKIP_HSL=1  install without HSL (for testing only: opfsolve then
+#                     needs an explicit --options=linear_solver=...)
 set -eu
 
 REPO="madsuite-org/opfsolve"
@@ -187,10 +189,28 @@ elif [ -n "${OPFSOLVE_HSL:-}" ]; then
     build_hsl "$OPFSOLVE_HSL"
 elif [ -e "$hsl" ]; then
     say "HSL: $(cat "$DIR/hsl/SOURCE" 2>/dev/null || echo "$hsl")"
+elif [ "${OPFSOLVE_SKIP_HSL:-}" = 1 ]; then
+    say "OPFSOLVE_SKIP_HSL=1: installing without HSL (testing only)"
 else
-    say "no HSL library: Ipopt will use MUMPS. For MA27, request the free licence at"
-    say "  $MA27_URL"
-    say "then run this script again with OPFSOLVE_HSL='<download link from the email>'"
+    say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
+    say "  1. request it at $MA27_URL"
+    say "  2. HSL emails you a download link (valid for 7 days)"
+    # Under `curl ... | sh`, standard input is the script, so ask on the terminal.
+    link=""
+    # Opening /dev/tty without a controlling terminal is fatal in some shells; test in a subshell.
+    if (: < /dev/tty) 2>/dev/null; then
+        printf '==> paste the download link (or a path to the package or an HSL library): ' > /dev/tty
+        read -r link < /dev/tty || link=""
+    fi
+    [ -n "$link" ] || die "no HSL download link. Rerun with OPFSOLVE_HSL='<download link from the email>'"
+    case "$link" in
+        *.so | *.so.* | *.dylib)
+            [ -f "$link" ] || die "HSL library not found: $link"
+            mkdir -p "$DIR/hsl"; ln -sf "$link" "$hsl"
+            echo "your library $link" > "$DIR/hsl/SOURCE"
+            say "using your HSL library $link" ;;
+        *) build_hsl "$link" ;;
+    esac
 fi
 
 say "run it again with: $DIR/bin/opfsolve <case>... [options]   (see --help)"

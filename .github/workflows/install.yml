@@ -13,6 +13,10 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# CI has no HSL licence: install without HSL and run with an explicit MUMPS.
+env:
+  OPFSOLVE_SKIP_HSL: "1"
+
 jobs:
   native:
     name: ${{ matrix.runner }}
@@ -23,14 +27,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: One-line install and solve
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
       - name: Check results
         run: |
           cat opfsolve-results/summary.csv opfsolve-results/system.txt
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
       - name: Command after install
         run: |
-          opfsolve/bin/opfsolve case30_ieee --form=rect --options="tol=1e-8" --output=again
+          opfsolve/bin/opfsolve case30_ieee --form=rect --options="tol=1e-8 linear_solver=mumps" --output=again
           grep -q LOCALLY_SOLVED again/summary.csv
       - uses: actions/upload-artifact@v5
         if: always()
@@ -48,7 +52,7 @@ jobs:
     steps:
       - name: One-line install and solve
         shell: powershell
-        run: '& ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1))) case14_ieee case118_ieee'
+        run: '& ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1))) case14_ieee case118_ieee --options=linear_solver=mumps'
       - name: Check results
         shell: powershell
         run: |
@@ -57,7 +61,7 @@ jobs:
       - name: Command after install
         shell: powershell
         run: |
-          opfsolve\bin\opfsolve.exe case30_ieee --form=rect --options="tol=1e-8" --output=again
+          opfsolve\bin\opfsolve.exe case30_ieee --form=rect --options="tol=1e-8 linear_solver=mumps" --output=again
           if (-not (Select-String -Quiet -Pattern LOCALLY_SOLVED -Path again\summary.csv)) { exit 1 }
 
   container:
@@ -81,7 +85,7 @@ jobs:
     steps:
       - run: ${{ matrix.deps }}
       - name: One-line install and solve
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
       - run: |
           cat opfsolve-results/summary.csv
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
@@ -94,7 +98,7 @@ jobs:
     steps:
       - run: apt-get update && apt-get install -y wget ca-certificates && ! command -v curl
       - name: One-line install and solve with wget
-        run: wget -qO- https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+        run: wget -qO- https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
       - run: |
           cat opfsolve-results/summary.csv
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2

@@ -47,7 +47,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.2.0"
+#define VERSION "0.3.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
@@ -973,9 +973,10 @@ static const char *usage =
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
     "  --output     output directory (default ./opfsolve-results)\n"
-    "  --hsl-lib    HSL library for Ipopt's hsllib option, providing MA27 (and MA57, MA86,\n"
-    "               MA97 if it has them); default <install>/hsl, or $OPFSOLVE_HSL_LIB;\n"
-    "               without one, Ipopt uses MUMPS\n"
+    "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
+    "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
+    "               $OPFSOLVE_HSL_LIB. MA27 is the linear solver unless --options sets\n"
+    "               linear_solver\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
     "               $OPFSOLVE_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
@@ -1101,13 +1102,21 @@ int main(int argc, char **argv) {
     /* Whether MA27 works depends on the Ipopt build and on the HSL library, if
      * any, which Ipopt only loads at solve time. So ask Ipopt: solve min x^2
      * with MA27. */
-    int has_ma27 = probe_ma27(&C.I, C.hsllib);
-    C.linear_solver = has_ma27 ? "ma27" : "mumps";
+    /* MA27 is the linear solver; another one only if the user asks for it. */
+    C.linear_solver = NULL;
     for (int k = 0; k < nopts; k++)
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
-    if (has_ma27) step("linear solver: %s", C.linear_solver);
-    else if (C.hsllib) step("linear solver: %s (MA27 could not be loaded from %s)", C.linear_solver, C.hsllib);
-    else step("linear solver: %s (no HSL library; for MA27 see %s)", C.linear_solver, MA27_URL);
+    if (!C.linear_solver) {
+        if (!probe_ma27(&C.I, C.hsllib)) {
+            if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
+            die("no HSL library with MA27. Request the free licence at\n  %s\n"
+                "then rerun the installer with the download link from the email, or pass\n"
+                "--hsl-lib=PATH (or set OPFSOLVE_HSL_LIB) for an HSL library you already have",
+                MA27_URL);
+        }
+        C.linear_solver = "ma27";
+    }
+    step("linear solver: %s", C.linear_solver);
 
     MKDIR(out);
     char path[8192];

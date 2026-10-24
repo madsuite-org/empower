@@ -16,9 +16,11 @@
 #   OPFSOLVE_HSL      your HSL download link (from HSL's email) or the downloaded
 #                     .tar.gz/.zip, to compile it, optimized, on this machine
 #   OPFSOLVE_HSL_LIB  an HSL library you already have, used as is
+#   OPFSOLVE_SKIP_HSL=1  install without HSL (for testing only)
 #
-# opfsolve never distributes HSL. Without it Ipopt uses MUMPS. For MA27, request
-# the free personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
+# HSL MA27 is required, and opfsolve never distributes it. Request the free
+# personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/; HSL emails
+# a download link, which the script asks for if OPFSOLVE_HSL is not set.
 
 # Native tools report through $LASTEXITCODE; with 'Stop', PowerShell 5 would
 # turn their stderr output into terminating errors.
@@ -158,10 +160,25 @@ if ($env:OPFSOLVE_HSL_LIB) {
     Build-Hsl $env:OPFSOLVE_HSL
 } elseif (Test-Path $HslLib) {
     Say "HSL: $(Get-Content (Join-Path $HslDir 'SOURCE') -ErrorAction SilentlyContinue)"
+} elseif ($env:OPFSOLVE_SKIP_HSL -eq '1') {
+    Say 'OPFSOLVE_SKIP_HSL=1: installing without HSL (testing only)'
 } else {
-    Say 'no HSL library: Ipopt will use MUMPS. For MA27, request the free licence at'
-    Say "  $Ma27Url"
-    Say "then run this script again with `$env:OPFSOLVE_HSL='<download link from the email>'"
+    Say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
+    Say "  1. request it at $Ma27Url"
+    Say '  2. HSL emails you a download link (valid for 7 days)'
+    $link = ''
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        $link = Read-Host '==> paste the download link (or a path to the package or an HSL library)'
+    }
+    if (-not $link) { Fail "no HSL download link. Rerun with `$env:OPFSOLVE_HSL='<download link from the email>'" }
+    if ($link -match '\.dll$') {
+        if (-not (Test-Path $link)) { Fail "HSL library not found: $link" }
+        Copy-Item $link $HslLib -Force
+        "your library $link" | Set-Content (Join-Path $HslDir 'SOURCE')
+        Say "using your HSL library $link"
+    } else {
+        Build-Hsl $link
+    }
 }
 
 Say "run it again with: $Exe <case>... [options]   (see --help)"
