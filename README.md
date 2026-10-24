@@ -34,7 +34,7 @@ Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install d
 
 **Upgrade** by running the installer again: it installs the latest release (or `OPFSOLVE_VERSION=vX.Y.Z`), keeps your HSL library, and recreates the Ipopt environment only if the release pins different packages. **Uninstall** with `sh -s -- --uninstall` (or `$env:OPFSOLVE_UNINSTALL='1'` on Windows), which removes `~/.opfsolve` and the PATH entries.
 
-**Integrity.** The installer downloads only over HTTPS. It checks each release archive against the release's `SHA256SUMS` and micromamba against its published SHA-256, unpacks into a staging directory, and swaps the result in only when it is complete. Ipopt and the compiler come from conda-forge through lock files in the archive, which pin each package by URL and MD5. Each archive also has a signed build provenance attestation; check it with `gh attestation verify opfsolve-<platform>.tar.gz --repo madsuite-org/opfsolve`.
+**Integrity.** The installer downloads only over HTTPS. It checks each release archive against the release's `SHA256SUMS` and micromamba against its published SHA-256, unpacks into a staging directory, and swaps the result in only when it is complete. Ipopt and the compiler come from conda-forge through lock files in the archive, which pin each package by URL and MD5. Each archive also has a signed build provenance attestation; check it with `gh attestation verify opfsolve-<platform>.tar.gz --repo madsuite-org/opfsolve` (GitHub CLI 2.49 or newer).
 
 ## Usage
 
