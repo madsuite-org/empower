@@ -85,3 +85,16 @@ jobs:
       - run: |
           cat opfsolve-results/summary.csv
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
+
+  # A fresh Ubuntu desktop has wget but no curl.
+  wget-only:
+    name: ubuntu:24.04 (wget, no curl)
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - run: apt-get update && apt-get install -y wget ca-certificates && ! command -v curl
+      - name: One-line install and solve with wget
+        run: wget -qO- https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee
+      - run: |
+          cat opfsolve-results/summary.csv
+          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2

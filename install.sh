@@ -5,6 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc --form=rect
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | OPFSOLVE_HSL='<your HSL download link>' sh
+#   wget -qO- https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh     # without curl
 #
 # Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
 # pglib_opf_case118_ieee. Pass --install-only to stop after installing.
@@ -35,7 +36,15 @@ MA27_URL="https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 say() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-command -v curl >/dev/null || die "curl is required"
+# get URL FILE (FILE "-" for stdout), with curl or, on systems without it such
+# as a fresh Ubuntu desktop, wget.
+if command -v curl >/dev/null; then
+    get() { curl -fSL --progress-bar -o "$2" "$1"; }
+elif command -v wget >/dev/null; then
+    get() { wget -q --show-progress -O "$2" "$1" 2>/dev/null || wget -q -O "$2" "$1"; }
+else
+    die "curl or wget is required"
+fi
 command -v tar >/dev/null || die "tar is required"
 
 install_only=0
@@ -75,7 +84,7 @@ if [ ! -x "$DIR/bin/opfsolve" ]; then
             url="https://github.com/$REPO/releases/download/$REL/opfsolve-$plat.tar.gz"
         fi
         say "downloading opfsolve ($REL): $url"
-        curl -fSL --progress-bar "$url" | tar xz -C "$DIR" --strip-components 1 ||
+        get "$url" - | tar xz -C "$DIR" --strip-components 1 ||
             die "no opfsolve release for $plat at $url"
     fi
     say "installed $DIR/bin/opfsolve and the compiled model library $DIR/emp"
@@ -91,7 +100,7 @@ mamba() {
         murl="https://github.com/mamba-org/micromamba-releases/releases/download/$MAMBA_VERSION/micromamba-$cplat"
         say "downloading micromamba $MAMBA_VERSION (conda-forge package manager): $murl"
         mkdir -p "$DIR/.mamba"
-        curl -fSL --progress-bar -o "$MM" "$murl" || die "could not download micromamba"
+        get "$murl" "$MM" || die "could not download micromamba"
         chmod +x "$MM"
     fi
     "$MM" "$@"
@@ -125,7 +134,7 @@ build_hsl() {
             # A download link from HSL's email is a page; the archive is under it.
             case "$src" in *.tar.gz | *.tgz | *.zip) ;; */) src="${src}package.tar.gz" ;; *) src="$src/package.tar.gz" ;; esac
             say "downloading your HSL package"
-            curl -fsSL -o "$work/pkg" "$src" || die "could not download the HSL package (download links expire after 7 days)"
+            get "$src" "$work/pkg" || die "could not download the HSL package (download links expire after 7 days)"
             pkg="$work/pkg" ;;
         *) [ -f "$src" ] || die "HSL package not found: $src"; pkg=$src ;;
     esac

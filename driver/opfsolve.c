@@ -184,6 +184,18 @@ static int run(char *const args[]) {
 #endif
 }
 
+/* Download url to path with curl, or wget where there is no curl (a fresh
+ * Ubuntu desktop has only wget). Returns 0 on success. */
+static int download(const char *url, const char *path) {
+    char *c[] = {"curl", "-fsSL", "-o", (char *)path, (char *)url, NULL};
+    int rc = run(c);
+    if (rc != -1) return rc;
+    char *w[] = {"wget", "-q", "-O", (char *)path, (char *)url, NULL};
+    rc = run(w);
+    if (rc == -1) die("neither curl nor wget is available to download %s", url);
+    return rc;
+}
+
 /* Release layout: <root>/bin/opfsolve and the model library MODEL_LIB; placed by
  * the installer: Ipopt (conda-forge) at IPOPT_LIB, the user's own compiled HSL at
  * HSL_LIB, and PGLib-OPF cases in <root>/cases/. */
@@ -580,8 +592,7 @@ static void add_all(List *cases) {
         step("downloading the PGLib-OPF library: %s", PGLIB_TGZ);
         char tgz[8400];
         snprintf(tgz, sizeof tgz, "%s/pglib-opf-" PGLIB_VERSION ".tar.gz", cd);
-        char *get[] = {"curl", "-fsSL", "-o", tgz, PGLIB_TGZ, NULL};
-        if (run(get) != 0) die("could not download PGLib-OPF");
+        if (download(PGLIB_TGZ, tgz) != 0) die("could not download PGLib-OPF");
         char *untar[] = {"tar", "-xzf", tgz, "-C", (char *)cd, NULL};
         if (run(untar) != 0) die("could not unpack %s", tgz);
         unlink(tgz);
@@ -631,8 +642,7 @@ static int resolve_case(const char *c, char *path, size_t cap) {
     snprintf(url, sizeof url, "%s/%s.m", PGLIB_RAW, name);
     snprintf(tmp, sizeof tmp, "%s.part", path);
     step("downloading %s", url);
-    char *args[] = {"curl", "-fsSL", "-o", tmp, url, NULL};
-    if (run(args) != 0) {
+    if (download(url, tmp) != 0) {
         unlink(tmp);
         return case_error("%s is not a file, and no PGLib-OPF case %s could be downloaded", c, name);
     }

@@ -8,6 +8,12 @@ Linux and macOS (Apple silicon):
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 ```
 
+or, where there is no `curl` (a fresh Ubuntu desktop has only `wget`):
+
+```sh
+wget -qO- https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
+```
+
 Windows (PowerShell):
 
 ```powershell
