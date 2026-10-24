@@ -124,14 +124,15 @@ jobs:
       - name: Corresponding source of the bundled GPL and LGPL libraries
         run: tools/gpl-sources.sh "$JULIA_VERSION" dist
       - name: SHA256SUMS
-        run: cd dist && sha256sum -- *.tar.* > SHA256SUMS && cat SHA256SUMS
+        run: cd dist && sha256sum -- *.tar.gz *.tar > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: dist/opfsolve-*.tar.gz
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
-            dist/*.tar.*
+            dist/*.tar.gz
+            dist/*.tar
             dist/SHA256SUMS
           generate_release_notes: true
 
