@@ -70,6 +70,10 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 
 `tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. The `Install` workflow runs the one-line installer against the latest release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15 (arm64) and macOS 15 (x86_64), Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04.
 
+## License
+
+`opfsolve` is MIT licensed. The release archives also contain the compiled ExaModelsPower model library and the Julia runtime, whose components keep their own licenses (MIT, MPL-2.0, BSD, LGPL, and, for parts of SuiteSparse, GPL-2.0+); [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them, and each archive carries their license files in `licenses/`. Ipopt, the HSL solvers, and the PGLib-OPF data are downloaded from their publishers by `install.sh` and are not distributed with `opfsolve`.
+
 ## Citation
 
 `opfsolve` combines four components. If you use it in published work, please cite each of them; the BibTeX entries are in [`CITATION.bib`](CITATION.bib).
@@ -85,7 +89,7 @@ PGLib-OPF asks that the version be stated, since the library changes between rel
 
 ## HSL
 
-The release archives of `opfsolve` contain no HSL code. `install.sh` downloads Ipopt directly from the [IDAES idaes-ext releases](https://github.com/IDAES/idaes-ext/releases), as `idaes get-extensions` does. IDAES states that the National Energy Technology Laboratory (NETL) has obtained a distribution license for the HSL linear solvers that allows their inclusion in IDAES's compiled Ipopt ([IDAES binary packages](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)). The IDAES macOS x86_64 build has no HSL; there `opfsolve` uses MUMPS. Any Ipopt can be used instead with `--ipopt-lib`, for example one built against your own [HSL licence](https://hsl.rl.ac.uk/licensing.html).
+`opfsolve` never distributes compiled Ipopt or HSL, and every build checks its archive for them (`tools/check-no-ipopt-hsl.sh`). `install.sh` downloads Ipopt directly from the [IDAES idaes-ext releases](https://github.com/IDAES/idaes-ext/releases), as `idaes get-extensions` does. IDAES states that the National Energy Technology Laboratory (NETL) has obtained a distribution license for the HSL linear solvers that allows their inclusion in IDAES's compiled Ipopt ([IDAES binary packages](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)). The IDAES macOS x86_64 build has no HSL; there `opfsolve` uses MUMPS. Any Ipopt can be used instead with `--ipopt-lib`, for example one built against your own [HSL licence](https://hsl.rl.ac.uk/licensing.html).
 
 ## Acknowledgement
 

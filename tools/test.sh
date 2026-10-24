@@ -16,7 +16,7 @@ for f in polar rect; do
         grep -q '"termination_status": "LOCALLY_SOLVED"' "$f/$c/solution.json"
         # IDAES ships no HSL for macOS x86_64; opfsolve falls back to MUMPS there.
         if [ "$plat" = macos-x86_64 ]; then ls=mumps; else ls=ma27; fi
-        grep -q "linear solver $ls" "$f/$c/ipopt.log"
+        grep -qi "linear solver $ls" "$f/$c/ipopt.log"
     done
 done
 # Objectives against the AC values in the PGLib-OPF README (5 significant digits).

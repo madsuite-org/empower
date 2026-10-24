@@ -19,6 +19,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #define LIBEXT "dylib"
@@ -812,6 +813,52 @@ static void write_solution(const char *path, const char *casefile, Ctx *C, Model
     free(bus.v); free(gen.v); free(br.v); free(text);
 }
 
+/* min (x - 1)^2: one variable, no constraints. */
+static Bool p_f(int n, double *x, Bool nx, double *f, void *u) {
+    (void)n; (void)nx; (void)u;
+    *f = (x[0] - 1) * (x[0] - 1);
+    return 1;
+}
+static Bool p_grad(int n, double *x, Bool nx, double *g, void *u) {
+    (void)n; (void)nx; (void)u;
+    g[0] = 2 * (x[0] - 1);
+    return 1;
+}
+static Bool p_g(int n, double *x, Bool nx, int m, double *g, void *u) {
+    (void)n; (void)x; (void)nx; (void)m; (void)g; (void)u;
+    return 1;
+}
+static Bool p_jac(int n, double *x, Bool nx, int m, int nnz, int *ir, int *jc, double *v, void *u) {
+    (void)n; (void)x; (void)nx; (void)m; (void)nnz; (void)ir; (void)jc; (void)v; (void)u;
+    return 1;
+}
+static Bool p_h(int n, double *x, Bool nx, double s, int m, double *y, Bool ny, int nnz, int *ir,
+                int *jc, double *v, void *u) {
+    (void)n; (void)x; (void)nx; (void)m; (void)y; (void)ny; (void)nnz; (void)u;
+    if (!v) { ir[0] = 1; jc[0] = 1; }
+    else v[0] = 2 * s;
+    return 1;
+}
+
+static int probe_ma27(Ipopt *I) {
+    double xl = -1e20, xu = 1e20, x = 0, obj = 0, zl = 0, zu = 0;
+    void *P = I->create(1, &xl, &xu, 0, NULL, NULL, 0, 1, 1, p_f, p_g, p_grad, p_jac, p_h);
+    if (!P) return 0;
+    I->int_opt(P, "print_level", 0);
+    I->str_opt(P, "sb", "yes");
+    I->str_opt(P, "linear_solver", "ma27");
+    /* Ipopt reports a missing solver on stdout even at print_level 0. */
+    fflush(stdout);
+    int saved = dup(1), devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) dup2(devnull, 1);
+    int status = I->solve(P, &x, NULL, &obj, NULL, &zl, &zu, NULL);
+    fflush(stdout);
+    if (devnull >= 0) { dup2(saved, 1); close(devnull); }
+    close(saved);
+    I->free(P);
+    return status == 0;
+}
+
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
@@ -915,13 +962,14 @@ int main(int argc, char **argv) {
     C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
     C.I.intermediate = dlsym(hi, "SetIntermediateCallback");
     step("Ipopt loaded (%.3f s)", now() - t0);
-    /* HSL is absent from some Ipopt builds (IDAES macOS x86_64, most conda builds). */
-    C.linear_solver = (dlsym(hi, "ma27ad_") || dlsym(hi, "ma27ad")) ? "ma27" : "mumps";
+    /* HSL is absent from some Ipopt builds (IDAES macOS x86_64, most conda builds),
+     * and some of those still export MA27 entry points that look for a separate
+     * libhsl at solve time. So ask Ipopt: solve min x^2 with MA27. */
+    int has_ma27 = probe_ma27(&C.I);
+    C.linear_solver = has_ma27 ? "ma27" : "mumps";
     for (int k = 0; k < nopts; k++)
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
-    step("linear solver: %s%s", C.linear_solver,
-         strcmp(C.linear_solver, "mumps") || (dlsym(hi, "ma27ad_") || dlsym(hi, "ma27ad"))
-             ? "" : " (this Ipopt has no HSL MA27)");
+    step("linear solver: %s%s", C.linear_solver, has_ma27 ? "" : " (this Ipopt has no HSL MA27)");
 
     mkdir(out, 0755);
     char path[8192];
