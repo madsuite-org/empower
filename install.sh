@@ -63,6 +63,7 @@ case "$os" in
         libipopt=libipopt.so
         ;;
     Darwin)
+        [ "$arch" = aarch64 ] || die "macOS on Intel is not supported; opfsolve needs Apple silicon (arm64)"
         plat="macos-$arch"
         iplat="darwin-$arch"
         libipopt=libipopt.dylib

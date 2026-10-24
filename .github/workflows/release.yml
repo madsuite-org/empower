@@ -49,8 +49,6 @@ jobs:
         include:
           - plat: macos-aarch64
             runner: macos-14
-          - plat: macos-x86_64
-            runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -67,9 +65,31 @@ jobs:
           name: opfsolve-${{ matrix.plat }}
           path: opfsolve-${{ matrix.plat }}.tar.gz
 
+  build-windows:
+    name: windows-x86_64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+      - run: echo "$HOME/.julia/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: tools/build.sh windows-x86_64
+      - name: Test
+        shell: pwsh
+        run: tools/test.ps1
+      - uses: actions/upload-artifact@v5
+        with:
+          name: opfsolve-windows-x86_64
+          path: opfsolve-windows-x86_64.tar.gz
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

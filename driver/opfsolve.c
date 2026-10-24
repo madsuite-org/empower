@@ -7,24 +7,41 @@
  */
 #include <ctype.h>
 #include <dirent.h>
-#include <dlfcn.h>
+#include <fcntl.h>
 #include <math.h>
-#include <spawn.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#include <fcntl.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#include <process.h>
+#include <windows.h>
+#define MODEL_LIB "emp/bin/libemp.dll"
+#define IPOPT_LIB "ipopt/libipopt-3.dll"
+#define NULL_DEVICE "NUL"
+#define MKDIR(p) _mkdir(p)
+#else
+#include <dlfcn.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#define NULL_DEVICE "/dev/null"
+#define MKDIR(p) mkdir(p, 0755)
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
-#define LIBEXT "dylib"
+#define MODEL_LIB "emp/lib/libemp.dylib"
+#define IPOPT_LIB "ipopt/libipopt.dylib"
 #else
-#define LIBEXT "so"
+#define MODEL_LIB "emp/lib/libemp.so"
+#define IPOPT_LIB "ipopt/libipopt.so"
+#endif
+extern char **environ;
 #endif
 
 #define VERSION "0.1.0"
@@ -32,15 +49,54 @@
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
 #define PGLIB_TGZ "https://github.com/power-grid-lib/pglib-opf/archive/refs/tags/v" PGLIB_VERSION ".tar.gz"
 
-extern char **environ;
-
 /* ---------------------------------------------------------------- utilities */
 
 static double now(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER c;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)freq.QuadPart;
+#else
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return t.tv_sec + 1e-9 * t.tv_nsec;
+#endif
 }
+
+/* Last path separator ('/' everywhere, also '\\' on Windows). */
+static char *last_sep(const char *p) {
+    char *a = strrchr(p, '/');
+#ifdef _WIN32
+    char *b = strrchr(p, '\\');
+    if (!a || (b && b > a)) a = b;
+#endif
+    return a;
+}
+
+/* Shared-library loading. */
+#ifdef _WIN32
+static char dl_err[512];
+static void *lib_open(const char *path) {
+    char p[8192];
+    snprintf(p, sizeof p, "%s", path);
+    for (char *c = p; *c; c++)
+        if (*c == '/') *c = '\\';
+    /* Resolve the library's own DLL dependencies from its directory. */
+    HMODULE h = LoadLibraryExA(p, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!h)
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                       GetLastError(), 0, dl_err, sizeof dl_err, NULL);
+    return (void *)h;
+}
+static void *lib_sym(void *h, const char *name) { return (void *)GetProcAddress((HMODULE)h, name); }
+static const char *lib_error(void) { return dl_err; }
+#else
+static void *lib_open(const char *path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
+static void *lib_sym(void *h, const char *name) { return dlsym(h, name); }
+static const char *lib_error(void) { return dlerror(); }
+#endif
 
 static double t_start;
 
@@ -95,36 +151,58 @@ static void *xcalloc(size_t n, size_t s) {
 static void *sym(void *h, const char *prefix, const char *name) {
     char buf[256];
     snprintf(buf, sizeof buf, "%s%s%s", prefix, *prefix ? "_" : "", name);
-    void *p = dlsym(h, buf);
-    if (!p) die("symbol %s not found: %s", buf, dlerror());
+    void *p = lib_sym(h, buf);
+    if (!p) die("symbol %s not found in a loaded library", buf);
     return p;
 }
 
+/* Run a program found on PATH and wait; returns its exit status, or -1. */
 static int run(char *const args[]) {
+#ifdef _WIN32
+    /* _spawnvp re-joins argv with spaces, so quote each argument. */
+    char *q[16];
+    int n = 0;
+    for (; args[n] && n < 15; n++) {
+        size_t L = strlen(args[n]) + 3;
+        q[n] = malloc(L);
+        snprintf(q[n], L, "\"%s\"", args[n]);
+    }
+    q[n] = NULL;
+    intptr_t rc = _spawnvp(_P_WAIT, args[0], (const char *const *)q);
+    for (int i = 0; i < n; i++) free(q[i]);
+    return (int)rc;
+#else
     pid_t pid;
     int st;
     if (posix_spawnp(&pid, args[0], NULL, NULL, args, environ) != 0) return -1;
     if (waitpid(pid, &st, 0) < 0) return -1;
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
 }
 
-/* Release layout: <root>/bin/opfsolve, <root>/emp/lib/libemp.<ext>,
- * <root>/ipopt/libipopt.<ext> (placed by install.sh), <root>/cases/. */
+/* Release layout: <root>/bin/opfsolve, the model library MODEL_LIB and (placed
+ * by the installer) the Ipopt library IPOPT_LIB under <root>, and <root>/cases/. */
 static char root[4096];
 
 static void find_root(void) {
     char exe[4096], real[4096];
-    uint32_t size = sizeof exe;
+#ifdef _WIN32
+    DWORD k = GetModuleFileNameA(NULL, exe, sizeof exe);
+    if (k == 0 || k >= sizeof exe) return;
+    if (!_fullpath(real, exe, sizeof real)) return;
+#else
 #ifdef __APPLE__
+    uint32_t size = sizeof exe;
     if (_NSGetExecutablePath(exe, &size) != 0) return;
 #else
-    ssize_t k = readlink("/proc/self/exe", exe, size - 1);
+    ssize_t k = readlink("/proc/self/exe", exe, sizeof exe - 1);
     if (k <= 0) return;
     exe[k] = 0;
 #endif
     if (!realpath(exe, real)) return;
+#endif
     for (int up = 0; up < 2; up++) {
-        char *slash = strrchr(real, '/');
+        char *slash = last_sep(real);
         if (!slash) return;
         *slash = 0;
     }
@@ -146,7 +224,7 @@ static const char *case_dir(void) {
     if (env) snprintf(dir, sizeof dir, "%s", env);
     else if (*root) snprintf(dir, sizeof dir, "%s/cases", root);
     else snprintf(dir, sizeof dir, "cases");
-    mkdir(dir, 0755);
+    MKDIR(dir);
     return dir;
 }
 
@@ -496,10 +574,13 @@ static void add_all(List *cases) {
     snprintf(marker, sizeof marker, "%s/BASELINE.md", dir);
     if (access(marker, R_OK) != 0) {
         step("downloading the PGLib-OPF library: %s", PGLIB_TGZ);
-        char cmd[9000];
-        snprintf(cmd, sizeof cmd, "curl -fsSL '%s' | tar xz -C '%s'", PGLIB_TGZ, cd);
-        char *args[] = {"sh", "-c", cmd, NULL};
-        if (run(args) != 0) die("could not download PGLib-OPF");
+        char tgz[8400];
+        snprintf(tgz, sizeof tgz, "%s/pglib-opf-" PGLIB_VERSION ".tar.gz", cd);
+        char *get[] = {"curl", "-fsSL", "-o", tgz, PGLIB_TGZ, NULL};
+        if (run(get) != 0) die("could not download PGLib-OPF");
+        char *untar[] = {"tar", "-xzf", tgz, "-C", (char *)cd, NULL};
+        if (run(untar) != 0) die("could not unpack %s", tgz);
+        unlink(tgz);
         step("saved %s", dir);
     } else {
         step("using cached PGLib-OPF library %s", dir);
@@ -528,7 +609,7 @@ static int resolve_case(const char *c, char *path, size_t cap) {
         snprintf(path, cap, "%s", c);
         return 0;
     }
-    if (strchr(c, '/')) return case_error("case file not found: %s", c);
+    if (last_sep(c)) return case_error("case file not found: %s", c);
     char name[1024];
     snprintf(name, sizeof name, "%s%s", strncmp(c, "pglib_opf_", 10) ? "pglib_opf_" : "", c);
     size_t L = strlen(name);
@@ -536,7 +617,7 @@ static int resolve_case(const char *c, char *path, size_t cap) {
     const char *cd = case_dir();
     /* One directory per PGLib-OPF release, shared with "all". */
     snprintf(path, cap, "%s/pglib-opf-" PGLIB_VERSION, cd);
-    mkdir(path, 0755);
+    MKDIR(path);
     snprintf(path, cap, "%s/pglib-opf-" PGLIB_VERSION "/%s.m", cd, name);
     if (access(path, R_OK) == 0) {
         step("using cached case %s", path);
@@ -557,7 +638,7 @@ static int resolve_case(const char *c, char *path, size_t cap) {
 }
 
 static void case_name(const char *path, char *out, size_t cap) {
-    const char *b = strrchr(path, '/');
+    const char *b = last_sep(path);
     snprintf(out, cap, "%s", b ? b + 1 : path);
     char *dot = strrchr(out, '.');
     if (dot) *dot = 0;
@@ -597,7 +678,7 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     char name[1024], out[8192], path[8400];
     case_name(casefile, name, sizeof name);
     snprintf(out, sizeof out, "%s/%s", outroot, name);
-    mkdir(out, 0755);
+    MKDIR(out);
 
     Model M = {0};
     load_model(&M, C->hm, C->model);
@@ -849,7 +930,7 @@ static int probe_ma27(Ipopt *I) {
     I->str_opt(P, "linear_solver", "ma27");
     /* Ipopt reports a missing solver on stdout even at print_level 0. */
     fflush(stdout);
-    int saved = dup(1), devnull = open("/dev/null", O_WRONLY);
+    int saved = dup(1), devnull = open(NULL_DEVICE, O_WRONLY);
     if (devnull >= 0) dup2(devnull, 1);
     int status = I->solve(P, &x, NULL, &obj, NULL, &zl, &zu, NULL);
     fflush(stdout);
@@ -926,9 +1007,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(form, "rect")) C.model = "acr";
     else die("--form must be polar or rect, got %s", form);
     if (strcmp(solver, "ipopt")) die("--solver must be ipopt, got %s", solver);
-    if (!modellib) modellib = under_root("emp/lib/libemp." LIBEXT);
+    if (!modellib) modellib = under_root(MODEL_LIB);
     if (!modellib) die("no model library: pass --model-lib or set OPFSOLVE_MODEL_LIB");
-    if (!ipoptlib) ipoptlib = under_root("ipopt/libipopt." LIBEXT);
+    if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);
     if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set OPFSOLVE_IPOPT_LIB");
 
     printf("opfsolve %s\n  form:          %s\n  solver:        %s\n  model library: %s\n"
@@ -945,14 +1026,14 @@ int main(int argc, char **argv) {
     /* Loading the model library starts its bundled Julia runtime. */
     step("loading model library");
     double t0 = now();
-    C.hm = dlopen(modellib, RTLD_NOW | RTLD_LOCAL);
-    if (!C.hm) die("cannot load model library: %s", dlerror());
+    C.hm = lib_open(modellib);
+    if (!C.hm) die("cannot load model library %s: %s", modellib, lib_error());
     step("model library loaded (%.3f s)", now() - t0);
 
     step("loading Ipopt");
     t0 = now();
-    void *hi = dlopen(ipoptlib, RTLD_NOW | RTLD_LOCAL);
-    if (!hi) die("cannot load Ipopt: %s", dlerror());
+    void *hi = lib_open(ipoptlib);
+    if (!hi) die("cannot load Ipopt %s: %s", ipoptlib, lib_error());
     C.I.create = sym(hi, "", "CreateIpoptProblem");
     C.I.free = sym(hi, "", "FreeIpoptProblem");
     C.I.solve = sym(hi, "", "IpoptSolve");
@@ -960,7 +1041,7 @@ int main(int argc, char **argv) {
     C.I.num_opt = sym(hi, "", "AddIpoptNumOption");
     C.I.int_opt = sym(hi, "", "AddIpoptIntOption");
     C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
-    C.I.intermediate = dlsym(hi, "SetIntermediateCallback");
+    C.I.intermediate = lib_sym(hi, "SetIntermediateCallback");
     step("Ipopt loaded (%.3f s)", now() - t0);
     /* HSL is absent from some Ipopt builds (IDAES macOS x86_64, most conda builds),
      * and some of those still export MA27 entry points that look for a separate
@@ -971,7 +1052,7 @@ int main(int argc, char **argv) {
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
     step("linear solver: %s%s", C.linear_solver, has_ma27 ? "" : " (this Ipopt has no HSL MA27)");
 
-    mkdir(out, 0755);
+    MKDIR(out);
     char path[8192];
     snprintf(path, sizeof path, "%s/summary.csv", out);
     int fresh = access(path, F_OK) != 0;

@@ -7,7 +7,7 @@ on:
     types: [published]
   push:
     branches: [main]
-    paths: [install.sh, .github/workflows/install.yml]
+    paths: [install.sh, install.ps1, .github/workflows/install.yml]
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15, macos-15-intel]
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
       - if: runner.os == 'Linux'
@@ -38,6 +38,28 @@ jobs:
         with:
           name: results-${{ matrix.runner }}
           path: opfsolve-results
+
+  windows:
+    name: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: One-line install and solve
+        shell: powershell
+        run: '& ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1))) case14_ieee case118_ieee'
+      - name: Check results
+        shell: powershell
+        run: |
+          Get-Content opfsolve-results\summary.csv, opfsolve-results\system.txt
+          if ((Select-String -Pattern LOCALLY_SOLVED -Path opfsolve-results\summary.csv).Count -ne 2) { exit 1 }
+      - name: Command after install
+        shell: powershell
+        run: |
+          opfsolve\bin\opfsolve.exe case30_ieee --form=rect --options="tol=1e-8" --output=again
+          if (-not (Select-String -Quiet -Pattern LOCALLY_SOLVED -Path again\summary.csv)) { exit 1 }
 
   container:
     name: ${{ matrix.image }}

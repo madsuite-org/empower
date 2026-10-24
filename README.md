@@ -2,11 +2,19 @@
 
 Solve AC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time, and Ipopt. No Julia installation is needed.
 
+Linux and macOS (Apple silicon):
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 ```
 
-The script installs into `./opfsolve`:
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1 | iex
+```
+
+The script installs into `./opfsolve` (`.\opfsolve` on Windows):
 
 - `bin/opfsolve` and the compiled ExaModelsPower model library for your platform,
 - the [IDAES](https://github.com/IDAES/idaes-ext) build of Ipopt, which includes the HSL MA27 linear solver,
@@ -17,6 +25,12 @@ then solves `pglib_opf_case118_ieee` from [PGLib-OPF](https://github.com/power-g
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc case9241_pegase --form=rect
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- all
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --install-only
+```
+
+On Windows, pass arguments through a script block:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1))) case2000_goc --form=rect
 ```
 
 ## Usage
@@ -54,9 +68,10 @@ opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ip
 | Platform | Ipopt build |
 |---|---|
 | Linux x86_64 and aarch64, glibc 2.28 or newer | idaes-ext `ubuntu1804`/`ubuntu2004`/`ubuntu2204`/`el7`/`el8`, chosen from `/etc/os-release` |
-| macOS arm64 and x86_64 | idaes-ext `darwin-aarch64`/`darwin-x86_64` |
+| macOS arm64 (Apple silicon) | idaes-ext `darwin-aarch64` |
+| Windows x86_64 (Windows 10 1803 or newer) | idaes-ext `windows-x86_64` |
 
-On Windows, use WSL. On Linux, the IDAES Ipopt build uses the system Fortran runtime and LAPACK; if they are missing, `install.sh` stops and prints the command that installs them:
+On Linux, the IDAES Ipopt build uses the system Fortran runtime and LAPACK; if they are missing, `install.sh` stops and prints the command that installs them:
 
 ```sh
 sudo apt-get install libgfortran5 liblapack3 libblas3 libgomp1   # Debian, Ubuntu
@@ -68,7 +83,7 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 - `emp/lib/libemp.so` (`.dylib` on macOS) holds the ExaModelsPower recipes `acp` (polar) and `acr` (rectangular), compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/opfsolve` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
 
-`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. The `Install` workflow runs the one-line installer against the latest release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15 (arm64) and macOS 15 (x86_64), Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04.
+`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. The `Install` workflow runs the one-line installer against the latest release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15 (arm64), Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04.
 
 ## License
 
@@ -82,7 +97,7 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 |---|---|---|
 | Algebraic modeling system | [ExaModels.jl](https://github.com/madsuite-org/ExaModels.jl), through [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl): the model and its derivatives | Shin, Anitescu, and Pacaud, "Accelerating optimal power flow with GPUs: SIMD abstraction of nonlinear programs and condensed-space interior-point methods," *Electric Power Systems Research* 236, 110651, 2024 |
 | Solver | [Ipopt](https://github.com/coin-or/Ipopt), IDAES build | Wächter and Biegler, "On the implementation of a primal-dual interior point filter line search algorithm for large-scale nonlinear programming," *Mathematical Programming* 106(1), 25–57, 2006 |
-| Linear solver | HSL MA27, inside the IDAES Ipopt (not on macOS x86_64, where MUMPS is used) | The acknowledgement HSL requires in all technical papers: "HSL, a collection of Fortran codes for large-scale scientific computation. See http://www.hsl.rl.ac.uk."; and for MA27, Duff and Reid, "The multifrontal solution of indefinite sparse symmetric linear equations," *ACM Transactions on Mathematical Software* 9(3), 302–325, 1983 |
+| Linear solver | HSL MA27, inside the IDAES Ipopt | The acknowledgement HSL requires in all technical papers: "HSL, a collection of Fortran codes for large-scale scientific computation. See http://www.hsl.rl.ac.uk."; and for MA27, Duff and Reid, "The multifrontal solution of indefinite sparse symmetric linear equations," *ACM Transactions on Mathematical Software* 9(3), 302–325, 1983 |
 | Problem formulation | The AC OPF problem formulation, as defined in [PowerModels.jl](https://github.com/lanl-ansi/PowerModels.jl) | Coffrin, Bent, Sundar, Ng, and Lubin, "PowerModels.jl: An Open-Source Framework for Exploring Power Flow Formulations," PSCC 2018 |
 | Data | [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf) v23.07 | Babaeinejadsarookolaee et al., "The Power Grid Library for Benchmarking AC Optimal Power Flow Algorithms," arXiv:1908.02788, 2019; also the source documents named in each case file header |
 
@@ -90,7 +105,7 @@ PGLib-OPF asks that the version be stated, since the library changes between rel
 
 ## HSL
 
-`opfsolve` never distributes compiled Ipopt or HSL, and every build checks its archive for them (`tools/check-no-ipopt-hsl.sh`). `install.sh` downloads Ipopt directly from the [IDAES idaes-ext releases](https://github.com/IDAES/idaes-ext/releases), as `idaes get-extensions` does. IDAES states that the National Energy Technology Laboratory (NETL) has obtained a distribution license for the HSL linear solvers that allows their inclusion in IDAES's compiled Ipopt ([IDAES binary packages](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)). The IDAES macOS x86_64 build has no HSL; there `opfsolve` uses MUMPS. Any Ipopt can be used instead with `--ipopt-lib`, for example one built against your own [HSL licence](https://hsl.rl.ac.uk/licensing.html).
+`opfsolve` never distributes compiled Ipopt or HSL, and every build checks its archive for them (`tools/check-no-ipopt-hsl.sh`). `install.sh` downloads Ipopt directly from the [IDAES idaes-ext releases](https://github.com/IDAES/idaes-ext/releases), as `idaes get-extensions` does. IDAES states that the National Energy Technology Laboratory (NETL) has obtained a distribution license for the HSL linear solvers that allows their inclusion in IDAES's compiled Ipopt ([IDAES binary packages](https://idaes-pse.readthedocs.io/en/stable/tutorials/getting_started/binaries.html)). If the Ipopt library in use has no HSL, `opfsolve` uses MUMPS. Any Ipopt can be used instead with `--ipopt-lib`, for example one built against your own [HSL licence](https://hsl.rl.ac.uk/licensing.html).
 
 ## Acknowledgement
 

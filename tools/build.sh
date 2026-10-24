@@ -19,7 +19,14 @@ julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
 rm -rf stage
 mkdir -p stage/opfsolve/bin
 julia --startup-file=no --project=compile compile/compile.jl stage/opfsolve/emp
-cc -O2 -Wall -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        # Static, so the driver adds no MinGW runtime DLLs of its own.
+        cc -O2 -Wall -static -o stage/opfsolve/bin/opfsolve.exe driver/opfsolve.c ;;
+    *)
+        cc -O2 -Wall -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm ;;
+esac
+find stage/opfsolve -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'opfsolve*' -type f
 cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/opfsolve/
 julia --startup-file=no --project=compile compile/licenses.jl stage/opfsolve/licenses
 tar czf "opfsolve-$plat.tar.gz" -C stage opfsolve
