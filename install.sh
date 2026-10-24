@@ -42,11 +42,10 @@ esac
 case "$os" in
     Linux)
         plat="linux-$arch"
-        id="" ; ver="" ; like=""
-        if [ -r /etc/os-release ]; then
-            . /etc/os-release
-            id="${ID:-}" ; ver="${VERSION_ID:-}" ; like="${ID_LIKE:-}"
-        fi
+        # Read os-release in a subshell: it defines VERSION, ID, and others,
+        # which must not leak into this script's variables.
+        osr() { [ -r /etc/os-release ] && (. /etc/os-release; eval "printf '%s' \"\${$1:-}\"") || true; }
+        id=$(osr ID); ver=$(osr VERSION_ID); like=$(osr ID_LIKE)
         major=${ver%%.*}
         case "$id $like" in
             *ubuntu*)

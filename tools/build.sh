@@ -16,6 +16,18 @@ if [ ! -d compile/deps/PrettyTables ]; then
 fi
 julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
 
+# Compile for the CPU targets of the official Julia binaries (JuliaCI/julia-buildkite,
+# utilities/build_envs.sh), not for the build machine's CPU, so the library runs on
+# any CPU of the architecture.
+case "$plat" in
+    *-x86_64) JULIA_CPU_TARGET='generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)' ;;
+    macos-aarch64) JULIA_CPU_TARGET='generic;apple-m1,clone_all' ;;
+    linux-aarch64) JULIA_CPU_TARGET='generic;cortex-a57;thunderx2t99;carmel,clone_all;apple-m1,base(3);neoverse-512tvb,-rand,-fpac,base(3)' ;;
+    *) echo "unknown platform $plat" >&2; exit 1 ;;
+esac
+export JULIA_CPU_TARGET
+echo "JULIA_CPU_TARGET=$JULIA_CPU_TARGET"
+
 rm -rf stage
 mkdir -p stage/opfsolve/bin
 julia --startup-file=no --project=compile compile/compile.jl stage/opfsolve/emp
