@@ -41,6 +41,7 @@ esac
 find stage/opfsolve -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'opfsolve*' -type f
 cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/opfsolve/
 julia --startup-file=no --project=compile compile/licenses.jl stage/opfsolve/licenses
+sh tools/lock.sh stage/opfsolve/locks
 tar czf "opfsolve-$plat.tar.gz" -C stage opfsolve
 sh tools/check-no-ipopt-hsl.sh "opfsolve-$plat.tar.gz"
 ls -la "opfsolve-$plat.tar.gz"

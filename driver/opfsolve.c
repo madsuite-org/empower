@@ -49,7 +49,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.4.0"
+#define VERSION "0.4.2"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION

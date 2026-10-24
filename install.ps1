@@ -77,6 +77,13 @@ function Get-Mamba {
     if ($LASTEXITCODE -ne 0) { Fail 'could not download micromamba' }
 }
 function Invoke-Mamba { Get-Mamba; & $Mamba @args }
+# From the release's lock file when it has one (no index download, no solve, the
+# same packages for everyone), else by spec.
+function Lock-Args($name, [string[]]$spec) {
+    $lock = Join-Path $Dir "locks\$name.txt"
+    if (Test-Path $lock) { return @('--file', $lock) }
+    return @('-c', 'conda-forge', '--override-channels') + $spec
+}
 
 # --- 1. opfsolve ---
 Section '[1/5] opfsolve'
@@ -129,7 +136,7 @@ function Start-Tools {
     $env:MAMBA_ROOT_PREFIX = Join-Path $Work 'mamba-root'
     $proc = Start-Process -FilePath $Mamba -NoNewWindow -PassThru `
         -RedirectStandardOutput (Join-Path $Work 'tools.log') -RedirectStandardError (Join-Path $Work 'tools.err') `
-        -ArgumentList @('create', '-y', '-q', '-p', (Join-Path $Work 'tools'), '-c', 'conda-forge', '--override-channels', 'gfortran')
+        -ArgumentList (@('create', '-y', '-q', '-p', (Join-Path $Work 'tools')) + (Lock-Args 'gfortran' @('gfortran')))
     $env:MAMBA_ROOT_PREFIX = Join-Path $MambaDir 'root'
     return $proc
 }
@@ -165,7 +172,8 @@ $IpoptDir = Join-Path $Dir 'ipopt'
 $IpoptLib = Join-Path $IpoptDir 'Library\bin\ipopt-3.dll'
 if (-not (Test-Path $IpoptLib)) {
     Say "installing $IpoptSpec from conda-forge"
-    Invoke-Mamba create -y -q -p $IpoptDir -c conda-forge --override-channels $IpoptSpec | Out-Null
+    $largs = Lock-Args 'ipopt' @($IpoptSpec)
+    Invoke-Mamba create -y -q -p $IpoptDir @largs | Out-Null
     if (-not (Test-Path $IpoptLib)) { Fail 'could not install Ipopt from conda-forge' }
     "conda-forge $IpoptSpec" | Set-Content (Join-Path $IpoptDir 'SOURCE')
 }

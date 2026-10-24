@@ -117,6 +117,14 @@ hsl="$DIR/hsl/libhsl.$ext"
 MM="$DIR/.mamba/micromamba"
 export MAMBA_ROOT_PREFIX="$DIR/.mamba/root"
 mamba() { "$MM" "$@"; }
+# create_env PREFIX NAME SPEC...: from the release's lock file when it has one
+# (no index download, no solve, the same packages for everyone), else by spec.
+create_env() {
+    p=$1; name=$2; shift 2
+    lockf="$DIR/locks/$name.txt"
+    if [ -f "$lockf" ]; then mamba create -y -q -p "$p" --file "$lockf"
+    else mamba create -y -q -p "$p" -c conda-forge --override-channels "$@"; fi
+}
 get_mamba() {
     [ -x "$MM" ] && return 0
     mkdir -p "$DIR/.mamba"
@@ -142,6 +150,27 @@ if [ ! -x "$DIR/bin/opfsolve" ]; then
     fi
 fi
 say "$("$DIR/bin/opfsolve" --version) and its compiled model library"
+
+# compile_hsl FC TOOLS_BIN: build the extracted package in $top into $hsl.
+compile_hsl() {
+    cfc=$1; tbin=$2
+    if [ -f "$top/meson.build" ]; then
+        # Coin-HSL and Coin-HSL Archive.
+        rm -rf "$top/build" "$work/inst"
+        (cd "$top" && PATH="${tbin:+$tbin:}$PATH" FC="$cfc" meson setup build --buildtype=release \
+            --prefix="$work/inst" >"$work/build.log" 2>&1 &&
+            PATH="${tbin:+$tbin:}$PATH" meson install -C build >>"$work/build.log" 2>&1) || return 1
+        lib=$(find "$work/inst" -name "libcoinhsl*.$ext" -type f | head -1)
+        [ -n "$lib" ] || return 1
+        cp "$lib" "$hsl"
+    else
+        # The standalone MA27 package.
+        if [ "$os" = Darwin ]; then shared="-dynamiclib"; else shared="-shared"; fi
+        "$cfc" -O3 -fPIC $shared -o "$hsl" "$top/src/ma27d.f" -Wl,-rpath,"$DIR/ipopt/lib" >"$work/build.log" 2>&1 || return 1
+    fi
+}
+# check_hsl: Ipopt solves a small problem with MA27 from $hsl.
+check_hsl() { "$DIR/bin/opfsolve" --check-hsl --hsl-lib="$hsl" >"$work/check.log" 2>&1; }
 
 # --- 2. HSL source: asked for first, so its compiler downloads alongside Ipopt ------
 # Compile the user's own HSL package, optimized for this machine. HSL's personal
@@ -214,53 +243,42 @@ if [ "$hsl_mode" = build ]; then
             say "compiler: $("$sysfc" --version | head -1) (yours)"
         fi
     fi
-    start_tools() {
-        tools=gfortran
-        [ -f "$top/meson.build" ] && tools="gfortran meson ninja pkg-config"
-        get_mamba
-        say "compiler: downloading $tools from conda-forge, alongside Ipopt"
-        ( MAMBA_ROOT_PREFIX="$work/mamba-root" "$MM" create -y -q -p "$work/tools" -c conda-forge \
-            --override-channels $tools >"$work/tools.log" 2>&1; echo $? > "$work/tools.rc" ) &
-        tools_pid=$!
+    # Download the compiler if needed, then compile, all in the background while
+    # Ipopt installs; only the final check needs Ipopt. The compiler gets its own
+    # package cache so the two downloads do not wait on each other's lock.
+    start_build() {   # sys|conda
+        if [ "$1" = sys ]; then
+            say "compiling with -O3 in the background, alongside Ipopt"
+            ( compile_hsl "$sysfc" "" && echo 0 > "$work/build.rc" || echo 1 > "$work/build.rc" ) &
+        else
+            tools=gfortran; lname=gfortran
+            [ -f "$top/meson.build" ] && { tools="gfortran meson ninja pkg-config"; lname=gfortran-meson; }
+            get_mamba
+            say "compiler: downloading $tools from conda-forge, then compiling with -O3, alongside Ipopt"
+            ( if MAMBA_ROOT_PREFIX="$work/mamba-root" create_env "$work/tools" $lname $tools >"$work/tools.log" 2>&1; then
+                  fc=$(ls "$work"/tools/bin/*gfortran | head -1)
+                  "$fc" --version | head -1 > "$work/fc.txt"
+                  compile_hsl "$fc" "$work/tools/bin" && echo 0 > "$work/build.rc" || echo 1 > "$work/build.rc"
+              else echo 2 > "$work/build.rc"; fi ) &
+        fi
+        build_pid=$!
     }
-    [ $use_sys -eq 1 ] || start_tools
+    if [ $use_sys -eq 1 ]; then "$sysfc" --version | head -1 > "$work/fc.txt"; start_build sys; else start_build conda; fi
 fi
 
 # --- 3. Ipopt from conda-forge -----------------------------------------------------
 section "[3/5] Ipopt"
 if [ ! -e "$DIR/ipopt/lib/libipopt.$ext" ]; then
     get_mamba
-    say "installing $IPOPT_SPEC from conda-forge"
-    mamba create -y -q -p "$DIR/ipopt" -c conda-forge --override-channels "$IPOPT_SPEC" >/dev/null ||
-        die "could not install Ipopt from conda-forge"
+    if [ -f "$DIR/locks/ipopt.txt" ]; then say "installing $IPOPT_SPEC from conda-forge (locked: $(grep -c '^https://' "$DIR/locks/ipopt.txt") packages)"
+    else say "installing $IPOPT_SPEC from conda-forge"; fi
+    create_env "$DIR/ipopt" ipopt "$IPOPT_SPEC" >/dev/null || die "could not install Ipopt from conda-forge"
     [ -e "$DIR/ipopt/lib/libipopt.$ext" ] || die "libipopt.$ext missing after installing Ipopt"
     echo "conda-forge $IPOPT_SPEC" > "$DIR/ipopt/SOURCE"
 fi
 say "$(cat "$DIR/ipopt/SOURCE" 2>/dev/null): $DIR/ipopt/lib/libipopt.$ext"
 
 # --- HSL: build, link, or keep -------------------------------------------------------
-# compile_hsl FC TOOLS_BIN: build the extracted package in $top into $hsl.
-compile_hsl() {
-    cfc=$1; tbin=$2
-    if [ -f "$top/meson.build" ]; then
-        # Coin-HSL and Coin-HSL Archive.
-        say "building with meson, buildtype=release"
-        rm -rf "$top/build" "$work/inst"
-        (cd "$top" && PATH="${tbin:+$tbin:}$PATH" FC="$cfc" meson setup build --buildtype=release \
-            --prefix="$work/inst" >"$work/build.log" 2>&1 &&
-            PATH="${tbin:+$tbin:}$PATH" meson install -C build >>"$work/build.log" 2>&1) || return 1
-        lib=$(find "$work/inst" -name "libcoinhsl*.$ext" -type f | head -1)
-        [ -n "$lib" ] || return 1
-        cp "$lib" "$hsl"
-    else
-        # The standalone MA27 package.
-        say "compiling MA27 (double precision) with -O3"
-        if [ "$os" = Darwin ]; then shared="-dynamiclib"; else shared="-shared"; fi
-        "$cfc" -O3 -fPIC $shared -o "$hsl" "$top/src/ma27d.f" -Wl,-rpath,"$DIR/ipopt/lib" >"$work/build.log" 2>&1 || return 1
-    fi
-}
-# check_hsl: Ipopt solves a small problem with MA27 from $hsl.
-check_hsl() { "$DIR/bin/opfsolve" --check-hsl --hsl-lib="$hsl" >"$work/check.log" 2>&1; }
 
 case "$hsl_mode" in
     lib)
@@ -273,24 +291,23 @@ case "$hsl_mode" in
         section "[4/5] HSL MA27"; say "your library $hsl_lib (MA27 checked)" ;;
     build)
         section "[4/5] HSL MA27"
-        fc=""
-        if [ $use_sys -eq 1 ]; then
-            if compile_hsl "$sysfc" "" && check_hsl; then
-                fc=$sysfc
-            else
-                say "that build did not work with Ipopt; using conda-forge's gfortran instead"
-                rm -f "$hsl"
-                start_tools
-            fi
-        fi
-        if [ -z "$fc" ]; then
-            wait "$tools_pid" 2>/dev/null || true
-            [ "$(cat "$work/tools.rc" 2>/dev/null)" = 0 ] || die "could not install the Fortran compiler; see $work/tools.log"
-            fc=$(ls "$work"/tools/bin/*gfortran | head -1)
-            compile_hsl "$fc" "$work/tools/bin" || die "HSL build failed; see $work/build.log"
+        wait "$build_pid" 2>/dev/null || true
+        rc=$(cat "$work/build.rc" 2>/dev/null || echo 1)
+        if [ "$rc" = 0 ] && check_hsl; then
+            :
+        elif [ $use_sys -eq 1 ]; then
+            say "the build with your compiler did not work with Ipopt; using conda-forge's gfortran instead"
+            rm -f "$hsl" "$work/build.rc"
+            use_sys=0; start_build conda; wait "$build_pid" 2>/dev/null || true
+            rc=$(cat "$work/build.rc" 2>/dev/null || echo 1)
+            [ "$rc" = 0 ] || die "HSL build failed; see $work/tools.log and $work/build.log"
             check_hsl || die "the HSL library built, but Ipopt cannot use its MA27; see $work/check.log"
+        else
+            [ "$rc" = 2 ] && die "could not install the Fortran compiler; see $work/tools.log"
+            [ "$rc" = 0 ] || die "HSL build failed; see $work/build.log"
+            die "the HSL library built, but Ipopt cannot use its MA27; see $work/check.log"
         fi
-        echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $("$fc" --version | head -1)" > "$DIR/hsl/SOURCE"
+        echo "built from $(basename "$top") on $(date -u +%Y-%m-%d) with $(cat "$work/fc.txt")" > "$DIR/hsl/SOURCE"
         rm -rf "$work"
         say "$hsl (MA27 checked)" ;;
     keep) section "[4/5] HSL MA27"; say "$(cat "$DIR/hsl/SOURCE" 2>/dev/null): $hsl" ;;
