@@ -111,7 +111,7 @@ if [ "$os" = Linux ] && command -v ldd >/dev/null; then
     if [ -n "$missing" ]; then
         die "Ipopt needs system libraries: $missing
   Debian/Ubuntu: sudo apt-get install libgfortran5 liblapack3 libblas3 libgomp1
-  RHEL/Fedora:   sudo dnf install libgfortran libquadmath lapack blas libgomp"
+  RHEL/Fedora:   sudo dnf install libgfortran lapack blas libgomp$([ "$arch" = x86_64 ] && echo ' libquadmath')"
     fi
 fi
 

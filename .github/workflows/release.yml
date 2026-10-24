@@ -26,7 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: System libraries for IDAES Ipopt
-        run: dnf install -y libgfortran libquadmath lapack blas libgomp
+        # libquadmath exists on x86_64 only.
+        run: dnf install -y libgfortran lapack blas libgomp && if [ "$(uname -m)" = x86_64 ]; then dnf install -y libquadmath; fi
       - name: Install Julia
         run: |
           curl -fsSL https://install.julialang.org | sh -s -- --yes --default-channel 1.12
