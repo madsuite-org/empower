@@ -76,12 +76,13 @@ sudo dnf install libgfortran lapack blas libgomp                 # RHEL, Fedora
 
 ## Citation
 
-`opfsolve` combines four components. If you use it in published work, please cite each of them; the BibTeX entries are in [`CITATION.bib`](CITATION.bib).
+`opfsolve` combines five components. If you use it in published work, please cite each of them; the BibTeX entries are in [`CITATION.bib`](CITATION.bib).
 
 | Component | What it provides | Cite |
 |---|---|---|
 | Algebraic modeling system | [ExaModels.jl](https://github.com/madsuite-org/ExaModels.jl), through [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl): the model and its derivatives | Shin, Anitescu, and Pacaud, "Accelerating optimal power flow with GPUs: SIMD abstraction of nonlinear programs and condensed-space interior-point methods," *Electric Power Systems Research* 236, 110651, 2024 |
 | Solver | [Ipopt](https://github.com/coin-or/Ipopt), IDAES build | Wächter and Biegler, "On the implementation of a primal-dual interior point filter line search algorithm for large-scale nonlinear programming," *Mathematical Programming* 106(1), 25–57, 2006 |
+| Linear solver | HSL MA27, inside the IDAES Ipopt (not on macOS x86_64, where MUMPS is used) | The acknowledgement HSL requires in all technical papers: "HSL, a collection of Fortran codes for large-scale scientific computation. See http://www.hsl.rl.ac.uk."; and for MA27, Duff and Reid, "The multifrontal solution of indefinite sparse symmetric linear equations," *ACM Transactions on Mathematical Software* 9(3), 302–325, 1983 |
 | Problem formulation | The AC OPF problem formulation, as defined in [PowerModels.jl](https://github.com/lanl-ansi/PowerModels.jl) | Coffrin, Bent, Sundar, Ng, and Lubin, "PowerModels.jl: An Open-Source Framework for Exploring Power Flow Formulations," PSCC 2018 |
 | Data | [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf) v23.07 | Babaeinejadsarookolaee et al., "The Power Grid Library for Benchmarking AC Optimal Power Flow Algorithms," arXiv:1908.02788, 2019; also the source documents named in each case file header |
 
