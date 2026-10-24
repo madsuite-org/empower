@@ -26,16 +26,15 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-14, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: One-line install and solve
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
-      - name: Check results
+      - name: One-line install
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- -y
+      - name: opfsolve in a new shell
         run: |
+          # A new shell reads the startup files the installer edited.
+          if [ "$RUNNER_OS" = macOS ]; then sh_new="zsh -ic"; else sh_new="bash -lic"; fi
+          $sh_new 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
           cat opfsolve-results/summary.csv opfsolve-results/system.txt
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
-      - name: Command after install
-        run: |
-          opfsolve/bin/opfsolve case30_ieee --form=rect --options="tol=1e-8 linear_solver=mumps" --output=again
-          grep -q LOCALLY_SOLVED again/summary.csv
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -50,19 +49,19 @@ jobs:
         runner: [windows-2022, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: One-line install and solve
-        shell: powershell
-        run: '& ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1))) case14_ieee case118_ieee --options=linear_solver=mumps'
-      - name: Check results
+      - name: One-line install, then opfsolve in the same session
         shell: powershell
         run: |
+          $env:OPFSOLVE_YES = '1'
+          irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+          opfsolve case14_ieee case118_ieee --options=linear_solver=mumps
           Get-Content opfsolve-results\summary.csv, opfsolve-results\system.txt
           if ((Select-String -Pattern LOCALLY_SOLVED -Path opfsolve-results\summary.csv).Count -ne 2) { exit 1 }
-      - name: Command after install
+      - name: The user PATH lists opfsolve for future sessions
         shell: powershell
         run: |
-          opfsolve\bin\opfsolve.exe case30_ieee --form=rect --options="tol=1e-8 linear_solver=mumps" --output=again
-          if (-not (Select-String -Quiet -Pattern LOCALLY_SOLVED -Path again\summary.csv)) { exit 1 }
+          $p = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (-not ($p -split ';' | Where-Object { $_ -eq (Join-Path $HOME '.opfsolve\bin') })) { exit 1 }
 
   container:
     name: ${{ matrix.image }}
@@ -84,21 +83,10 @@ jobs:
     container: ${{ matrix.image }}
     steps:
       - run: ${{ matrix.deps }}
-      - name: One-line install and solve
-        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
-      - run: |
-          cat opfsolve-results/summary.csv
-          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
-
-  # A fresh Ubuntu desktop has wget but no curl.
-  wget-only:
-    name: ubuntu:24.04 (wget, no curl)
-    runs-on: ubuntu-latest
-    container: ubuntu:24.04
-    steps:
-      - run: apt-get update && apt-get install -y wget ca-certificates && ! command -v curl
-      - name: One-line install and solve with wget
-        run: wget -qO- https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- case14_ieee case118_ieee --options=linear_solver=mumps
-      - run: |
+      - name: One-line install
+        run: curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh -s -- -y
+      - name: opfsolve in a new shell
+        run: |
+          bash -lic 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
           cat opfsolve-results/summary.csv
           test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2

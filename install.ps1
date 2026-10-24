@@ -1,22 +1,24 @@
-# Install opfsolve (compiled ExaModelsPower AC OPF models) with Ipopt from
-# conda-forge on Windows, optionally build the user's own HSL MA27, and solve AC
-# OPF cases. In PowerShell:
+# Install the opfsolve command on Windows: compiled ExaModelsPower AC OPF models,
+# Ipopt from conda-forge, and the user's own HSL MA27 compiled on this machine.
+# In PowerShell:
 #
 #   irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1))) case2000_goc --form=rect
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1))) all
 #
-# Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
-# pglib_opf_case118_ieee. Pass --install-only to stop after installing.
+# Then run `opfsolve <case>...` (see `opfsolve --help`).
+#
+# Like juliaup, it installs into ~\.opfsolve, adds ~\.opfsolve\bin to the user
+# PATH (and to this session), and asks for confirmation unless OPFSOLVE_YES=1.
 #
 # Environment:
-#   OPFSOLVE_DIR      install directory (default .\opfsolve)
-#   OPFSOLVE_VERSION  release tag (default: latest)
-#   OPFSOLVE_ARCHIVE  local release archive to install instead of downloading one
-#   OPFSOLVE_HSL      your HSL download link (from HSL's email) or the downloaded
-#                     .tar.gz/.zip, to compile it, optimized, on this machine
-#   OPFSOLVE_HSL_LIB  an HSL library you already have, used as is
-#   OPFSOLVE_SKIP_HSL=1  install without HSL (for testing only)
+#   OPFSOLVE_YES=1          accept the defaults without asking
+#   OPFSOLVE_DIR            install directory (default ~\.opfsolve)
+#   OPFSOLVE_ADD_TO_PATH    yes (default) or no
+#   OPFSOLVE_HSL            your HSL download link (from HSL's email) or the
+#                           downloaded .tar.gz/.zip, compiled on this machine
+#   OPFSOLVE_HSL_LIB        an HSL library you already have, used as is
+#   OPFSOLVE_VERSION        release tag (default: latest)
+#   OPFSOLVE_ARCHIVE        local release archive to install instead of downloading one
+#   OPFSOLVE_SKIP_HSL=1     install without HSL (for testing only)
 #
 # HSL MA27 is required, and opfsolve never distributes it. Request the free
 # personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/; HSL emails
@@ -28,7 +30,9 @@ $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
 $Repo = 'madsuite-org/opfsolve'
-$Dir = if ($env:OPFSOLVE_DIR) { $env:OPFSOLVE_DIR } else { Join-Path (Get-Location) 'opfsolve' }
+$Dir = if ($env:OPFSOLVE_DIR) { $env:OPFSOLVE_DIR } else { Join-Path $HOME '.opfsolve' }
+$AddToPath = if ($env:OPFSOLVE_ADD_TO_PATH) { $env:OPFSOLVE_ADD_TO_PATH } else { 'yes' }
+$Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
 $Version = if ($env:OPFSOLVE_VERSION) { $env:OPFSOLVE_VERSION } else { 'latest' }
 $IpoptSpec = 'ipopt=3.14.20'
 $MambaVersion = '2.9.0-0'
@@ -42,19 +46,18 @@ foreach ($tool in 'curl.exe', 'tar.exe') {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Fail "$tool is required (Windows 10 1803 or newer)" }
 }
 
-$Opts = @($args)
-$InstallOnly = $false
-if ($Opts.Count -gt 0 -and $Opts[0] -eq '--install-only') {
-    $InstallOnly = $true
-    $Opts = if ($Opts.Count -gt 1) { $Opts[1..($Opts.Count - 1)] } else { @() }
-}
-if ($Opts.Count -eq 0 -and -not $InstallOnly) { $Opts = @('case118_ieee') }
 
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -ne 'AMD64') { Fail "unsupported architecture: $arch (Windows x86_64 only)" }
 $Plat = 'windows-x86_64'
 Say "platform: $Plat"
 Say "install directory: $Dir"
+Say "add $Dir\bin to the user PATH: $AddToPath"
+if ($env:OPFSOLVE_YES -ne '1') {
+    if (-not $Interactive) { Fail 'unable to ask for confirmation; set $env:OPFSOLVE_YES=1 to accept the defaults' }
+    $answer = Read-Host '==> proceed? [Y/n]'
+    if ($answer -and $answer -notmatch '^(y|yes)$') { Fail 'cancelled' }
+}
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 $Exe = Join-Path $Dir 'bin\opfsolve.exe'
 
@@ -167,7 +170,7 @@ if ($env:OPFSOLVE_HSL_LIB) {
     Say "  1. request it at $Ma27Url"
     Say '  2. HSL emails you a download link (valid for 7 days)'
     $link = ''
-    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    if ($Interactive) {
         try { Start-Process $Ma27Url; Say 'opened the request page in your browser' } catch { }
         $link = Read-Host '==> paste the download link (or a path to the package or an HSL library)'
     }
@@ -182,31 +185,21 @@ if ($env:OPFSOLVE_HSL_LIB) {
     }
 }
 
-Say "run it again with: $Exe <case>... [options]   (see --help)"
-if ($InstallOnly) { return }
-
-# Output directory, as opfsolve will choose it, for the machine description.
-$Out = 'opfsolve-results'
-for ($i = 0; $i -lt $Opts.Count; $i++) {
-    if ($Opts[$i] -like '--output=*') { $Out = $Opts[$i].Substring(9) }
-    elseif ($Opts[$i] -eq '--output' -and $i + 1 -lt $Opts.Count) { $Out = $Opts[$i + 1] }
+# --- PATH, as juliaup does it on Windows: the user PATH, and this session ---
+$BinDir = Join-Path $Dir 'bin'
+if ($AddToPath -match '^(yes|1)$') {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $parts = @($userPath -split ';' | Where-Object { $_ })
+    if ($parts -notcontains $BinDir) {
+        [Environment]::SetEnvironmentVariable('Path', (@($BinDir) + $parts) -join ';', 'User')
+        Say "added $BinDir to the user PATH"
+    }
+    if (@($env:Path -split ';') -notcontains $BinDir) { $env:Path = "$BinDir;$env:Path" }
 }
-New-Item -ItemType Directory -Force -Path $Out | Out-Null
-$os = Get-CimInstance Win32_OperatingSystem
-$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-@(
-    "date: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
-    "os: $($os.Caption) $($os.Version)",
-    "cpu: $($cpu.Name)",
-    "cores: $($cpu.NumberOfCores)",
-    "opfsolve: $(& $Exe --version)",
-    "ipopt: $(Get-Content (Join-Path $IpoptDir 'SOURCE') -ErrorAction SilentlyContinue)",
-    "hsl: $(if (Test-Path $HslLib) { Get-Content (Join-Path $HslDir 'SOURCE') -ErrorAction SilentlyContinue } else { 'none' })",
-    "command: opfsolve $($Opts -join ' ')"
-) | Set-Content (Join-Path $Out 'system.txt')
 
-Say "running: opfsolve $($Opts -join ' ')"
-& $Exe @Opts 2>&1 | Tee-Object -FilePath (Join-Path $Out 'opfsolve.log')
-$rc = $LASTEXITCODE
-Say "results in ${Out}: summary.csv, <case>\solution.json, <case>\ipopt.log, opfsolve.log, system.txt"
-$global:LASTEXITCODE = $rc
+Say "installed: $(& $Exe --version)"
+if ($AddToPath -match '^(yes|1)$') {
+    Say 'run: opfsolve case118_ieee     (opfsolve --help for options)'
+} else {
+    Say "run: $Exe case118_ieee     (opfsolve --help for options)"
+}

@@ -31,11 +31,13 @@
 #else
 #include <dlfcn.h>
 #include <spawn.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #define NULL_DEVICE "/dev/null"
 #define MKDIR(p) mkdir(p, 0755)
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#include <sys/sysctl.h>
 #define MODEL_LIB "emp/lib/libemp.dylib"
 #define IPOPT_LIB "ipopt/lib/libipopt.dylib"
 #define HSL_LIB "hsl/libhsl.dylib"
@@ -47,7 +49,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.3.0"
+#define VERSION "0.4.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
@@ -184,15 +186,11 @@ static int run(char *const args[]) {
 #endif
 }
 
-/* Download url to path with curl, or wget where there is no curl (a fresh
- * Ubuntu desktop has only wget). Returns 0 on success. */
+/* Download url to path with curl. Returns 0 on success. */
 static int download(const char *url, const char *path) {
     char *c[] = {"curl", "-fsSL", "-o", (char *)path, (char *)url, NULL};
     int rc = run(c);
-    if (rc != -1) return rc;
-    char *w[] = {"wget", "-q", "-O", (char *)path, (char *)url, NULL};
-    rc = run(w);
-    if (rc == -1) die("neither curl nor wget is available to download %s", url);
+    if (rc == -1) die("curl is needed to download %s", url);
     return rc;
 }
 
@@ -956,6 +954,63 @@ static int probe_ma27(Ipopt *I, const char *hsllib) {
     return status == 0;
 }
 
+/* Record the machine and the libraries of a run in <output>/system.txt. */
+static void write_system(const char *out, const char *ipoptlib, const char *hsllib, int argc,
+                         char **argv) {
+    char path[8192], buf[512] = "";
+    snprintf(path, sizeof path, "%s/system.txt", out);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    time_t t = time(NULL);
+    char date[64];
+    strftime(date, sizeof date, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
+    fprintf(f, "date: %s\nopfsolve: %s\n", date, VERSION);
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    const char *cpu = getenv("PROCESSOR_IDENTIFIER");
+    fprintf(f, "os: Windows\ncpu: %s\nlogical cpus: %lu\n", cpu ? cpu : "unknown",
+            (unsigned long)si.dwNumberOfProcessors);
+#else
+    struct utsname u;
+    if (uname(&u) == 0) fprintf(f, "os: %s %s %s\n", u.sysname, u.release, u.machine);
+#ifdef __APPLE__
+    size_t L = sizeof buf;
+    if (sysctlbyname("machdep.cpu.brand_string", buf, &L, NULL, 0) != 0) snprintf(buf, sizeof buf, "unknown");
+#else
+    FILE *c = fopen("/proc/cpuinfo", "r");
+    char line[512];
+    while (c && fgets(line, sizeof line, c)) {
+        if (!strncmp(line, "model name", 10) || !strncmp(line, "Model name", 10)) {
+            char *v = strchr(line, ':');
+            if (v) snprintf(buf, sizeof buf, "%s", v + 2);
+            buf[strcspn(buf, "\n")] = 0;
+            break;
+        }
+    }
+    if (c) fclose(c);
+#endif
+    fprintf(f, "cpu: %s\nlogical cpus: %ld\n", *buf ? buf : "unknown", sysconf(_SC_NPROCESSORS_ONLN));
+#endif
+    /* The installer leaves a SOURCE file next to what it installed. */
+    const char *libs[2][2] = {{"ipopt", ipoptlib}, {"hsl", hsllib}};
+    for (int k = 0; k < 2; k++) {
+        fprintf(f, "%s library: %s\n", libs[k][0], libs[k][1] ? libs[k][1] : "(none)");
+        if (!libs[k][1] || !*root) continue;
+        snprintf(path, sizeof path, "%s/%s/SOURCE", root, libs[k][0]);
+        FILE *src = fopen(path, "r");
+        if (src && fgets(buf, sizeof buf, src)) {
+            buf[strcspn(buf, "\n")] = 0;
+            fprintf(f, "%s: %s\n", libs[k][0], buf);
+        }
+        if (src) fclose(src);
+    }
+    fprintf(f, "command:");
+    for (int i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
+    fprintf(f, "\n");
+    fclose(f);
+}
+
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
@@ -982,7 +1037,8 @@ static const char *usage =
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp/lib)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
-    "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv.\n";
+    "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv;\n"
+    "<output>/system.txt records the machine, the libraries, and the command.\n";
 
 /* Accept both --name=value and --name value. */
 static const char *flag(const char *a, const char *name, int *i, int argc, char **argv) {
@@ -1119,6 +1175,7 @@ int main(int argc, char **argv) {
     step("linear solver: %s", C.linear_solver);
 
     MKDIR(out);
+    write_system(out, ipoptlib, C.hsllib, argc, argv);
     char path[8192];
     snprintf(path, sizeof path, "%s/summary.csv", out);
     int fresh = access(path, F_OK) != 0;

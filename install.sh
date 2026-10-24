@@ -1,35 +1,36 @@
 #!/bin/sh
-# Install opfsolve (compiled ExaModelsPower AC OPF models) with Ipopt from
-# conda-forge, optionally build the user's own HSL MA27, and solve AC OPF cases.
+# Install the opfsolve command: compiled ExaModelsPower AC OPF models, Ipopt from
+# conda-forge, and the user's own HSL MA27 compiled on this machine.
 #
 #   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc --form=rect
-#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | OPFSOLVE_HSL='<your HSL download link>' sh
-#   wget -qO- https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh     # without curl
+#   curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- -y --hsl='<link>'
 #
-# Arguments are passed to opfsolve (see `opfsolve --help`); with none, it solves
-# pglib_opf_case118_ieee. Pass --install-only to stop after installing.
+# Then run `opfsolve <case>...` (see `opfsolve --help`).
+#
+# Like juliaup, it installs into ~/.opfsolve, puts ~/.opfsolve/bin on PATH in
+# the shell startup files inside a marked block, and asks for confirmation
+# unless given -y.
+#
+# Options:
+#   -y, --yes                    accept the defaults without asking
+#   -p, --path PATH              install directory (default ~/.opfsolve)
+#       --add-to-path yes|no     add PATH/bin to PATH in shell startup files (default yes)
+#       --hsl LINK|FILE          the HSL download link from HSL's email, or the
+#                                downloaded package, to compile on this machine
+#       --hsl-lib FILE           an HSL library you already have, used as is
+#   -h, --help
 #
 # HSL MA27 is required, and opfsolve never distributes it. Request the free
-# personal licence at
-#   https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/
-# HSL emails a download link. The script asks for it, or takes it from
-#   OPFSOLVE_HSL=<download link, or the downloaded .tar.gz/.zip>
-#       compiled, optimized, on this machine; or
-#   OPFSOLVE_HSL_LIB=<path to an HSL library you already have (libhsl, libcoinhsl, HSL_jll)>
-#       used as is.
+# personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ ; HSL emails
+# a download link, which the script asks for if --hsl/--hsl-lib is not given.
 #
-# Environment:
-#   OPFSOLVE_DIR      install directory (default ./opfsolve)
-#   OPFSOLVE_VERSION  release tag (default: latest)
-#   OPFSOLVE_ARCHIVE  local release archive to install instead of downloading one
-#   OPFSOLVE_HSL, OPFSOLVE_HSL_LIB   see above
-#   OPFSOLVE_SKIP_HSL=1  install without HSL (for testing only: opfsolve then
-#                     needs an explicit --options=linear_solver=...)
+# Environment (same as the options): OPFSOLVE_DIR, OPFSOLVE_HSL, OPFSOLVE_HSL_LIB;
+# also OPFSOLVE_VERSION (release tag, default latest), OPFSOLVE_ARCHIVE (a local
+# release archive), and OPFSOLVE_SKIP_HSL=1 (install without HSL, for testing only).
 set -eu
 
 REPO="madsuite-org/opfsolve"
-DIR="${OPFSOLVE_DIR:-$PWD/opfsolve}"
+DIR="${OPFSOLVE_DIR:-$HOME/.opfsolve}"
 REL="${OPFSOLVE_VERSION:-latest}"
 IPOPT_SPEC="ipopt=3.14.20"
 MAMBA_VERSION="2.9.0-0"
@@ -38,20 +39,43 @@ MA27_URL="https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 say() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# get URL FILE (FILE "-" for stdout), with curl or, on systems without it such
-# as a fresh Ubuntu desktop, wget.
-if command -v curl >/dev/null; then
-    get() { curl -fSL --progress-bar -o "$2" "$1"; }
-elif command -v wget >/dev/null; then
-    get() { wget -q --show-progress -O "$2" "$1" 2>/dev/null || wget -q -O "$2" "$1"; }
-else
-    die "curl or wget is required"
-fi
+usage() { sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed '$d; s/^# \{0,1\}//' || echo "see https://github.com/$REPO"; }
+
+yes=0
+add_to_path=yes
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -y | --yes) yes=1 ;;
+        -p | --path) shift; DIR=${1:?--path needs a directory} ;;
+        --path=*) DIR=${1#*=} ;;
+        --add-to-path) shift; add_to_path=${1:?--add-to-path needs yes or no} ;;
+        --add-to-path=*) add_to_path=${1#*=} ;;
+        --hsl) shift; OPFSOLVE_HSL=${1:?--hsl needs a link or file} ;;
+        --hsl=*) OPFSOLVE_HSL=${1#*=} ;;
+        --hsl-lib) shift; OPFSOLVE_HSL_LIB=${1:?--hsl-lib needs a file} ;;
+        --hsl-lib=*) OPFSOLVE_HSL_LIB=${1#*=} ;;
+        -h | --help) usage; exit 0 ;;
+        *) die "unknown option $1 (see --help)" ;;
+    esac
+    shift
+done
+case "$add_to_path" in yes | 1) add_to_path=yes ;; no | 0) add_to_path=no ;; *) die "--add-to-path takes yes or no" ;; esac
+case "$DIR" in /*) ;; *) DIR="$PWD/$DIR" ;; esac
+
+# Under `curl ... | sh`, standard input is the script: prompts read the terminal.
+have_tty=0
+(: < /dev/tty) 2>/dev/null && have_tty=1
+ask() {   # question default -> answer
+    [ $have_tty -eq 1 ] || { echo "$2"; return; }
+    printf '%s ' "$1" > /dev/tty
+    read -r ans < /dev/tty || ans=""
+    echo "${ans:-$2}"
+}
+
+command -v curl >/dev/null || die "curl is required"
+get() { curl -fSL --progress-bar -o "$2" "$1"; }   # get URL FILE ("-" for stdout)
 command -v tar >/dev/null || die "tar is required"
 
-install_only=0
-if [ "${1:-}" = "--install-only" ]; then install_only=1; shift; fi
-[ $# -eq 0 ] && [ $install_only -eq 0 ] && set -- case118_ieee
 
 os=$(uname -s)
 arch=$(uname -m)
@@ -72,6 +96,14 @@ case "$os" in
 esac
 say "platform: $plat"
 say "install directory: $DIR"
+say "add $DIR/bin to PATH in shell startup files: $add_to_path"
+if [ $yes -eq 0 ]; then
+    [ $have_tty -eq 1 ] || die "unable to ask for confirmation; run with -y to accept the defaults (--help for options)"
+    case "$(ask '==> proceed? [Y/n]' y)" in
+        y | Y | yes | Yes | YES) ;;
+        *) die "cancelled" ;;
+    esac
+fi
 mkdir -p "$DIR"
 
 # --- opfsolve ----------------------------------------------------------------
@@ -197,8 +229,7 @@ else
     say "  2. HSL emails you a download link (valid for 7 days)"
     # Under `curl ... | sh`, standard input is the script, so ask on the terminal.
     link=""
-    # Opening /dev/tty without a controlling terminal is fatal in some shells; test in a subshell.
-    if (: < /dev/tty) 2>/dev/null; then
+    if [ $have_tty -eq 1 ]; then
         # Open the request page for the user; on a machine without a desktop (ssh,
         # a server) the URL above is all there is.
         if [ "$os" = Darwin ]; then
@@ -209,7 +240,7 @@ else
         printf '==> paste the download link (or a path to the package or an HSL library): ' > /dev/tty
         read -r link < /dev/tty || link=""
     fi
-    [ -n "$link" ] || die "no HSL download link. Rerun with OPFSOLVE_HSL='<download link from the email>'"
+    [ -n "$link" ] || die "no HSL download link. Rerun with --hsl='<download link from the email>'"
     case "$link" in
         *.so | *.so.* | *.dylib)
             [ -f "$link" ] || die "HSL library not found: $link"
@@ -220,38 +251,48 @@ else
     esac
 fi
 
-say "run it again with: $DIR/bin/opfsolve <case>... [options]   (see --help)"
-[ $install_only -eq 1 ] && exit 0
-
-# --- solve --------------------------------------------------------------------
-out=opfsolve-results
-prev=""
-for a in "$@"; do
-    case "$a" in --output=*) out=${a#--output=} ;; esac
-    [ "$prev" = "--output" ] && out=$a
-    prev=$a
-done
-mkdir -p "$out"
-{
-    echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "uname: $(uname -a)"
-    if [ "$os" = Linux ]; then
-        echo "cpu: $(awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo)"
-        echo "cores: $(nproc 2>/dev/null || echo unknown)"
-    else
-        echo "cpu: $(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
-        echo "cores: $(sysctl -n hw.ncpu 2>/dev/null)"
+# --- PATH, the way juliaup does it ---------------------------------------------
+bindir="$DIR/bin"
+block_begin="# >>> opfsolve initialize >>>"
+block_end="# <<< opfsolve initialize <<<"
+write_block() {   # file: replace any earlier block, then append the current one
+    f=$1
+    if [ -f "$f" ] && grep -qF "$block_begin" "$f"; then
+        awk -v b="$block_begin" -v e="$block_end" '$0 == b {skip = 1} !skip {print} $0 == e {skip = 0}' "$f" > "$f.opfsolve-tmp" &&
+            cat "$f.opfsolve-tmp" > "$f" && rm -f "$f.opfsolve-tmp"
     fi
-    echo "opfsolve: $("$DIR/bin/opfsolve" --version)"
-    echo "ipopt: $(cat "$DIR/ipopt/SOURCE" 2>/dev/null)"
-    echo "hsl: $(cat "$DIR/hsl/SOURCE" 2>/dev/null || echo none)"
-    echo "command: opfsolve $*"
-} > "$out/system.txt"
+    cat >> "$f" <<BLOCK
+$block_begin
 
-say "running: opfsolve $*"
-# Stream the output and keep a copy; POSIX sh has no pipefail, so the exit
-# status goes through a file.
-{ "$DIR/bin/opfsolve" "$@" && echo 0 > "$out/.rc" || echo $? > "$out/.rc"; } 2>&1 | tee "$out/opfsolve.log"
-rc=$(cat "$out/.rc"); rm -f "$out/.rc"
-say "results in $out: summary.csv, <case>/solution.json, <case>/ipopt.log, opfsolve.log, system.txt"
-exit "$rc"
+# !! Contents within this block are managed by opfsolve !!
+
+case ":\$PATH:" in
+    *:$bindir:*)
+        ;;
+
+    *)
+        export PATH=$bindir\${PATH:+:\${PATH}}
+        ;;
+esac
+
+$block_end
+BLOCK
+    say "added $bindir to PATH in $f"
+}
+if [ "$add_to_path" = yes ]; then
+    write_block "$HOME/.bashrc"
+    if [ -f "$HOME/.bash_profile" ]; then write_block "$HOME/.bash_profile"; else write_block "$HOME/.profile"; fi
+    case "${SHELL:-}" in */zsh) zsh_user=1 ;; *) zsh_user=0 ;; esac
+    { [ -f "$HOME/.zshrc" ] || [ $zsh_user -eq 1 ] || [ "$os" = Darwin ]; } && write_block "$HOME/.zshrc"
+fi
+
+say "installed: $("$bindir/opfsolve" --version)"
+case ":$PATH:" in
+    *":$bindir:"*) say "run: opfsolve case118_ieee     (opfsolve --help for options)" ;;
+    *)
+        if [ "$add_to_path" = yes ]; then
+            say "opfsolve is on PATH in new shells. To use it in this one, run:"
+            say "  export PATH=\"$bindir:\$PATH\""
+        fi
+        say "run: $bindir/opfsolve case118_ieee     (opfsolve --help for options)" ;;
+esac

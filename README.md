@@ -10,37 +10,27 @@ Linux and macOS (Apple silicon):
 curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
 ```
 
-or, where there is no `curl` (a fresh Ubuntu desktop has only `wget`):
-
-```sh
-wget -qO- https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
-```
-
 Windows (PowerShell):
 
 ```powershell
 irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1 | iex
 ```
 
-The script installs into `./opfsolve` (`.\opfsolve` on Windows):
+The installer works like juliaup's. It shows the install directory, asks for confirmation (`-y` accepts the defaults), and installs into `~/.opfsolve`:
 
 - `bin/opfsolve` and the compiled ExaModelsPower model library for your platform,
 - Ipopt 3.14 from [conda-forge](https://anaconda.org/conda-forge/ipopt), installed with [micromamba](https://github.com/mamba-org/micromamba-releases),
-- HSL MA27, compiled with `-O3` on your machine from your own licensed copy,
+- HSL MA27, compiled with `-O3` on your machine from your own licensed copy.
 
-then solves `pglib_opf_case118_ieee` from [PGLib-OPF](https://github.com/power-grid-lib/pglib-opf). Arguments after `sh -s --` go to `opfsolve`:
+It then puts `~/.opfsolve/bin` on `PATH`: in a marked `# >>> opfsolve initialize >>>` block in `~/.bashrc`, `~/.bash_profile` or `~/.profile`, and `~/.zshrc` (zsh and macOS), and in the user `PATH` on Windows, where it also applies to the current PowerShell session. In a new terminal, run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- case2000_goc case9241_pegase --form=rect
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- all
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --install-only
+opfsolve case118_ieee
 ```
 
-On Windows, pass arguments through a script block:
+A shell cannot change the `PATH` of the terminal that started it, so on Linux and macOS the installer prints the one `export` line that makes `opfsolve` available in the current terminal as well.
 
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1))) case2000_goc --form=rect
-```
+Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install directory), `--add-to-path no` (leave the startup files alone), `--hsl LINK` (the download link from HSL's email), and `--hsl-lib FILE` (an HSL library you already have). On Windows, set the environment variables `OPFSOLVE_YES=1`, `OPFSOLVE_DIR`, `OPFSOLVE_ADD_TO_PATH=no`, `OPFSOLVE_HSL`, or `OPFSOLVE_HSL_LIB` before running it.
 
 ## Usage
 
@@ -50,12 +40,12 @@ opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options="NAME=VALUE .
 
 | Argument | Meaning |
 |---|---|
-| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `opfsolve/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
+| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `~/.opfsolve/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
 | `--form` | Voltage formulation: `polar` (default) or `rect`. |
 | `--solver` | `ipopt` (default, and the only solver in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The linear solver is `ma27`; with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. |
 | `--output` | Output directory (default `./opfsolve-results`). |
-| `--hsl-lib` | HSL library to use (default `opfsolve/hsl`, or `OPFSOLVE_HSL_LIB`). |
+| `--hsl-lib` | HSL library to use (default `~/.opfsolve/hsl`, or `OPFSOLVE_HSL_LIB`). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
 ```sh
@@ -71,24 +61,24 @@ opfsolve/bin/opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ip
 | `summary.csv` | One row per case: termination status, objective, iterations, problem size, and the time to parse and build the model and to solve (split into model callbacks and Ipopt). |
 | `<case>/solution.json` | The result in the layout PowerModels.jl uses: `termination_status`, `primal_status`, `objective`, `solve_time`, and `solution` with `bus` (`vm`, `va`), `gen` (`pg`, `qg`), and `branch` (`pf`, `qf`, `pt`, `qt`) in per unit, keyed by MATPOWER bus number and by generator and branch row. Out-of-service components are omitted. Ipopt's constraint multipliers are under `constraint_multipliers`, by model constraint block. |
 | `<case>/ipopt.log` | Full Ipopt output. |
-| `opfsolve.log`, `system.txt` | Written by `install.sh`: the console output, and the date, OS, CPU, and versions used. |
+| `system.txt` | The date, OS, CPU, opfsolve version, the Ipopt and HSL libraries used (and where they came from), and the command. |
 
 ## HSL (MA27)
 
 opfsolve requires MA27. Its licence is free for personal use, but `opfsolve` never distributes it, so each user downloads it:
 
 1. Request the free personal licence for MA27 at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/. HSL emails a download link, valid for 7 days.
-2. Run the installer. Without `OPFSOLVE_HSL`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link in `OPFSOLVE_HSL`. The installer downloads the package, installs a Fortran compiler from conda-forge, compiles MA27 with `-O3` on your machine into `opfsolve/hsl/`, and removes the compiler again:
+2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`OPFSOLVE_HSL` on Windows). The installer downloads the package, installs a Fortran compiler from conda-forge, compiles MA27 with `-O3` on your machine into `opfsolve/hsl/`, and removes the compiler again:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | OPFSOLVE_HSL='<download link>' sh
+curl -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh -s -- --hsl='<download link>'
 ```
 
 ```powershell
 $env:OPFSOLVE_HSL = '<download link>'; irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1 | iex
 ```
 
-`OPFSOLVE_HSL` also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), set `OPFSOLVE_HSL_LIB=/path/to/libhsl.so` when installing, or pass `--hsl-lib=PATH` to `opfsolve`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
+`--hsl` (`OPFSOLVE_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`OPFSOLVE_HSL_LIB` on Windows) or to `opfsolve`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
 
 ## Platforms
 
@@ -105,7 +95,7 @@ No system packages are needed: conda-forge supplies Ipopt's Fortran runtime and 
 - `emp/lib/libemp.so` (`.dylib` on macOS) holds the ExaModelsPower recipes `acp` (polar) and `acr` (rectangular), compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/opfsolve` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
 
-`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. After publishing, it runs the one-line installers against the release on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. CI has no HSL licence, so it installs with `OPFSOLVE_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `opfsolve` refuses to run without MA27; the HSL build is tested by hand.
+`tools/build.sh <plat>` builds `opfsolve-<plat>.tar.gz` (Julia 1.12 and a C compiler are needed), and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with both forms. The `Release` workflow builds and tests every platform on each push and publishes the archives on a `v*` tag. After publishing, it runs the one-line installers against the release, then `opfsolve` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. CI has no HSL licence, so it installs with `-y` and `OPFSOLVE_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `opfsolve` refuses to run without MA27; the HSL build is tested by hand.
 
 ## License
 
