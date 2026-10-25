@@ -4,8 +4,3 @@ ExaModelsCompiler = "3d1e9a26-5b74-4f0c-9a2b-7c8f4e11d3a7"
 ExaModelsPower = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
 JuliaC = "acedd4c2-ced6-4a15-accc-2607eb759ba2"
 PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
-
-[sources]
-# ExaModelsPower with the compiled MATPOWER writer (madsuite-org/ExaModelsPower.jl#63),
-# until it is in a release.
-ExaModelsPower = {rev = "18a04a64a86671ef5141bca61fe7c1433f19b69d", url = "https://github.com/madsuite-org/ExaModelsPower.jl.git"}
