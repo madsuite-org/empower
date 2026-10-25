@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
 
+- Renamed from opfsolve to empower: the command, the repository (madsuite-org/empower), the install directory (`~/.empower`), and the environment variables (`EMPOWER_*`).
+- `--form=dc` solves the DC OPF (ExaModelsPower's `dcp` model).
+- The result is the solved case in MATPOWER's `savecase` layout, `<case>/solution.m`, written by ExaModelsPower's `write_matpower_solution` compiled into the model library, in place of `solution.json`.
+- MATPOWER cases with commented-out or blank table rows, CRLF line endings, or `rateA = 0` (no limit) are read correctly (ExaPowerIO 0.3.2).
 - `summary.csv` is rewritten each run instead of appended to, so it describes one run, like `system.txt`.
 
 ## v0.5.0

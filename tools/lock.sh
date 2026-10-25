@@ -1,6 +1,6 @@
 #!/bin/sh
 # Write explicit conda-forge lock files for this platform into DIR (default
-# stage/opfsolve/locks): the exact package URLs and checksums of the Ipopt and
+# stage/empower/locks): the exact package URLs and checksums of the Ipopt and
 # Fortran-compiler environments the installer creates. Installing from a lock
 # skips downloading conda-forge's index and solving, and gives every install of
 # a release the same packages.
@@ -8,7 +8,7 @@
 #   tools/lock.sh [DIR]
 set -eu
 cd "$(dirname "$0")/.."
-out=${1:-stage/opfsolve/locks}
+out=${1:-stage/empower/locks}
 ipopt_spec=$(sed -n 's/^IPOPT_SPEC="\(.*\)"$/\1/p' install.sh)
 mamba_version=$(sed -n 's/^MAMBA_VERSION="\(.*\)"$/\1/p' install.sh)
 [ -n "$ipopt_spec" ] && [ -n "$mamba_version" ] || { echo "cannot read IPOPT_SPEC/MAMBA_VERSION from install.sh" >&2; exit 1; }

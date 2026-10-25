@@ -1,9 +1,10 @@
 #!/bin/sh
-# Build opfsolve-<plat>.tar.gz:
-#   opfsolve/bin/opfsolve       C driver: loads the model library and Ipopt at run time
-#   opfsolve/emp/lib/libemp.*   ExaModelsPower AC OPF recipes acp (polar) and acr
-#                               (rectangular), compiled by ExaModelsCompiler.compile_all
-#                               with juliac --trim=safe, plus a private Julia runtime
+# Build empower-<plat>.tar.gz:
+#   empower/bin/empower       C driver: loads the model library and Ipopt at run time
+#   empower/emp/lib/libemp.*   ExaModelsPower OPF recipes acp (polar), acr (rectangular)
+#                               and dcp (DC) with their MATPOWER writers, compiled by
+#                               ExaModelsCompiler.compile_all with juliac --trim=safe,
+#                               plus a private Julia runtime
 set -eu
 plat=$1
 cd "$(dirname "$0")/.."
@@ -32,19 +33,19 @@ export JULIA_CPU_TARGET
 echo "JULIA_CPU_TARGET=$JULIA_CPU_TARGET"
 
 rm -rf stage
-mkdir -p stage/opfsolve/bin
-julia --startup-file=no --project=compile compile/compile.jl stage/opfsolve/emp
+mkdir -p stage/empower/bin
+julia --startup-file=no --project=compile compile/compile.jl stage/empower/emp
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         # Static, so the driver adds no MinGW runtime DLLs of its own.
-        cc -O2 -Wall -Wextra -static -o stage/opfsolve/bin/opfsolve.exe driver/opfsolve.c ;;
+        cc -O2 -Wall -Wextra -static -o stage/empower/bin/empower.exe driver/empower.c ;;
     *)
-        cc -O2 -Wall -Wextra -o stage/opfsolve/bin/opfsolve driver/opfsolve.c -ldl -lm ;;
+        cc -O2 -Wall -Wextra -o stage/empower/bin/empower driver/empower.c -ldl -lm ;;
 esac
-find stage/opfsolve -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'opfsolve*' -type f
-cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/opfsolve/
-julia --startup-file=no --project=compile compile/licenses.jl stage/opfsolve/licenses
-sh tools/lock.sh stage/opfsolve/locks
-tar czf "opfsolve-$plat.tar.gz" -C stage opfsolve
-sh tools/check-no-ipopt-hsl.sh "opfsolve-$plat.tar.gz"
-ls -la "opfsolve-$plat.tar.gz"
+find stage/empower -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'empower*' -type f
+cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/empower/
+julia --startup-file=no --project=compile compile/licenses.jl stage/empower/licenses
+sh tools/lock.sh stage/empower/locks
+tar czf "empower-$plat.tar.gz" -C stage empower
+sh tools/check-no-ipopt-hsl.sh "empower-$plat.tar.gz"
+ls -la "empower-$plat.tar.gz"

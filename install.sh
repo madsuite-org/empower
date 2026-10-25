@@ -1,33 +1,33 @@
 #!/bin/sh
-# Install the opfsolve command: compiled ExaModelsPower AC OPF models, Ipopt from
+# Install the empower command: compiled ExaModelsPower AC OPF models, Ipopt from
 # conda-forge, and the user's own HSL MA27 compiled on this machine.
 #
-#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
+#   curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh
 #
 # Everything is inside main(), called on the last line, so a download cut short
 # runs nothing.
 set -eu
 
-REPO="madsuite-org/opfsolve"
+REPO="madsuite-org/empower"
 IPOPT_SPEC="ipopt=3.14.20"
 MAMBA_VERSION="2.9.0-0"
 MA27_URL="https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 
 usage() {
     cat <<'EOF'
-Install opfsolve (compiled ExaModelsPower AC OPF models, Ipopt from conda-forge,
+Install empower (compiled ExaModelsPower AC OPF models, Ipopt from conda-forge,
 and your own HSL MA27, compiled on this machine).
 
-Like juliaup, it installs into ~/.opfsolve, puts ~/.opfsolve/bin on PATH in the
+Like juliaup, it installs into ~/.empower, puts ~/.empower/bin on PATH in the
 shell startup files inside a marked block, and asks for confirmation unless -y.
 Running it again upgrades to the latest release.
 
-  curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.sh | sh
+  curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh
   curl ... | sh -s -- -y --hsl='<download link from HSL's email>'
 
 Options:
   -y, --yes                accept the defaults without asking
-  -p, --path DIR           install directory (default ~/.opfsolve)
+  -p, --path DIR           install directory (default ~/.empower)
       --add-to-path yes|no add DIR/bin to PATH in shell startup files (default yes)
       --hsl LINK|FILE      the HSL download link from HSL's email, or the
                            downloaded package, to compile on this machine
@@ -35,14 +35,14 @@ Options:
       --uninstall          remove DIR and the PATH blocks from the startup files
   -h, --help
 
-HSL MA27 is required, and opfsolve never distributes it. Request the free
+HSL MA27 is required, and empower never distributes it. Request the free
 personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ ; HSL emails a
 download link, which the installer asks for if --hsl/--hsl-lib is not given.
 
-Environment: OPFSOLVE_DIR, OPFSOLVE_HSL, OPFSOLVE_HSL_LIB (as the options);
-OPFSOLVE_VERSION (release tag, default latest); OPFSOLVE_ARCHIVE (a local release
-archive, for testing); OPFSOLVE_FC (the Fortran compiler to try first; default
-gfortran on PATH); OPFSOLVE_SKIP_HSL=1 (install without HSL, for testing only).
+Environment: EMPOWER_DIR, EMPOWER_HSL, EMPOWER_HSL_LIB (as the options);
+EMPOWER_VERSION (release tag, default latest); EMPOWER_ARCHIVE (a local release
+archive, for testing); EMPOWER_FC (the Fortran compiler to try first; default
+gfortran on PATH); EMPOWER_SKIP_HSL=1 (install without HSL, for testing only).
 EOF
 }
 
@@ -84,17 +84,17 @@ rc_files() {
     if [ -f "$HOME/.zshrc" ] || [ $zsh_user -eq 1 ] || [ "$(uname -s)" = Darwin ]; then printf '%s\n' "$HOME/.zshrc"; fi
 }
 
-block_begin="# >>> opfsolve initialize >>>"
-block_end="# <<< opfsolve initialize <<<"
-remove_block() {   # FILE: drop an earlier opfsolve block, if any
+block_begin="# >>> empower initialize >>>"
+block_end="# <<< empower initialize <<<"
+remove_block() {   # FILE: drop an earlier empower block, if any
     [ -f "$1" ] && grep -qF "$block_begin" "$1" || return 0
-    awk -v b="$block_begin" -v e="$block_end" '$0 == b {skip = 1} !skip {print} $0 == e {skip = 0}' "$1" > "$1.opfsolve-tmp" &&
-        cat "$1.opfsolve-tmp" > "$1" && rm -f "$1.opfsolve-tmp"
+    awk -v b="$block_begin" -v e="$block_end" '$0 == b {skip = 1} !skip {print} $0 == e {skip = 0}' "$1" > "$1.empower-tmp" &&
+        cat "$1.empower-tmp" > "$1" && rm -f "$1.empower-tmp"
 }
 
 main() {
-    DIR="${OPFSOLVE_DIR:-$HOME/.opfsolve}"
-    REL="${OPFSOLVE_VERSION:-latest}"
+    DIR="${EMPOWER_DIR:-$HOME/.empower}"
+    REL="${EMPOWER_VERSION:-latest}"
     yes=0
     add_to_path=yes
     uninstall=0
@@ -105,10 +105,10 @@ main() {
             --path=*) DIR=${1#*=} ;;
             --add-to-path) shift; add_to_path=${1:?--add-to-path needs yes or no} ;;
             --add-to-path=*) add_to_path=${1#*=} ;;
-            --hsl) shift; OPFSOLVE_HSL=${1:?--hsl needs a link or file} ;;
-            --hsl=*) OPFSOLVE_HSL=${1#*=} ;;
-            --hsl-lib) shift; OPFSOLVE_HSL_LIB=${1:?--hsl-lib needs a file} ;;
-            --hsl-lib=*) OPFSOLVE_HSL_LIB=${1#*=} ;;
+            --hsl) shift; EMPOWER_HSL=${1:?--hsl needs a link or file} ;;
+            --hsl=*) EMPOWER_HSL=${1#*=} ;;
+            --hsl-lib) shift; EMPOWER_HSL_LIB=${1:?--hsl-lib needs a file} ;;
+            --hsl-lib=*) EMPOWER_HSL_LIB=${1#*=} ;;
             --uninstall) uninstall=1 ;;
             -h | --help) usage; exit 0 ;;
             *) die "unknown option $1 (see --help)" ;;
@@ -117,8 +117,8 @@ main() {
     done
     case "$add_to_path" in yes | 1) add_to_path=yes ;; no | 0) add_to_path=no ;; *) die "--add-to-path takes yes or no" ;; esac
     DIR=$(absolute "$DIR")
-    [ -n "${OPFSOLVE_HSL_LIB:-}" ] && OPFSOLVE_HSL_LIB=$(absolute "$OPFSOLVE_HSL_LIB")
-    case "${OPFSOLVE_HSL:-}" in "" | http://* | https://*) ;; *) OPFSOLVE_HSL=$(absolute "$OPFSOLVE_HSL") ;; esac
+    [ -n "${EMPOWER_HSL_LIB:-}" ] && EMPOWER_HSL_LIB=$(absolute "$EMPOWER_HSL_LIB")
+    case "${EMPOWER_HSL:-}" in "" | http://* | https://*) ;; *) EMPOWER_HSL=$(absolute "$EMPOWER_HSL") ;; esac
 
     # Under `curl ... | sh`, standard input is the script: prompts read the terminal.
     have_tty=0
@@ -131,14 +131,14 @@ main() {
     }
 
     if [ $uninstall -eq 1 ]; then
-        printf '%sopfsolve uninstall%s\n' "$B" "$R"
+        printf '%sempower uninstall%s\n' "$B" "$R"
         say "remove:  $DIR"
-        say "and the opfsolve PATH block from: $(rc_files | tr '\n' ' ')"
+        say "and the empower PATH block from: $(rc_files | tr '\n' ' ')"
         if [ $yes -eq 0 ]; then
             [ $have_tty -eq 1 ] || die "unable to ask for confirmation; run with -y"
             case "$(ask 'proceed? [y/N]' n)" in y | Y | yes | Yes | YES) ;; *) die "cancelled" ;; esac
         fi
-        [ -x "$DIR/bin/opfsolve" ] || [ ! -e "$DIR" ] || die "$DIR does not look like an opfsolve install; not removing it"
+        [ -x "$DIR/bin/empower" ] || [ ! -e "$DIR" ] || die "$DIR does not look like an empower install; not removing it"
         rm -rf "$DIR"
         rc_files | while IFS= read -r f; do remove_block "$f"; done
         say "done"
@@ -165,24 +165,24 @@ main() {
             fi
             ext=so ;;
         Darwin)
-            [ "$arch" = aarch64 ] || die "macOS on Intel is not supported; opfsolve needs Apple silicon (arm64)"
+            [ "$arch" = aarch64 ] || die "macOS on Intel is not supported; empower needs Apple silicon (arm64)"
             plat="macos-$arch"; cplat=osx-arm64; ext=dylib
             mamba_sha=ec2a072f028e1a7cf20f3e2e74d5a8127cf5a5f27636375b5359811565f4e5be ;;
         *) die "unsupported OS: $os (on Windows, use install.ps1)" ;;
     esac
 
-    # The release to install: the latest one unless OPFSOLVE_VERSION names a tag.
-    if [ -n "${OPFSOLVE_ARCHIVE:-}" ]; then
+    # The release to install: the latest one unless EMPOWER_VERSION names a tag.
+    if [ -n "${EMPOWER_ARCHIVE:-}" ]; then
         tag="local archive"
     elif [ "$REL" = latest ]; then
         tag=$(curl --proto '=https' --tlsv1.2 -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed 's|.*/tag/||') ||
-            die "could not reach GitHub to find the latest opfsolve release"
-        case "$tag" in v*) ;; *) die "could not find the latest opfsolve release" ;; esac
+            die "could not reach GitHub to find the latest empower release"
+        case "$tag" in v*) ;; *) die "could not find the latest empower release" ;; esac
     else
         tag=$REL
     fi
 
-    printf '%sopfsolve installer%s\n' "$B" "$R"
+    printf '%sempower installer%s\n' "$B" "$R"
     say "platform:      $plat"
     say "release:       $tag"
     say "install into:  $DIR"
@@ -218,30 +218,30 @@ main() {
         chmod +x "$MM.part" && mv -f "$MM.part" "$MM"
     }
 
-    # --- 1. opfsolve: download, verify, unpack aside, then swap in ----------------
-    section "[1/5] opfsolve"
+    # --- 1. empower: download, verify, unpack aside, then swap in ----------------
+    section "[1/5] empower"
     installed=$(cat "$DIR/RELEASE" 2>/dev/null || true)
-    if [ -x "$DIR/bin/opfsolve" ] && [ "$installed" = "$tag" ] && [ -z "${OPFSOLVE_ARCHIVE:-}" ]; then
+    if [ -x "$DIR/bin/empower" ] && [ "$installed" = "$tag" ] && [ -z "${EMPOWER_ARCHIVE:-}" ]; then
         say "$tag is installed"
     else
         stage="$DIR/.staging"
         rm -rf "$stage"; mkdir -p "$stage"
-        if [ -n "${OPFSOLVE_ARCHIVE:-}" ]; then
-            say "from $OPFSOLVE_ARCHIVE"
-            cp "$OPFSOLVE_ARCHIVE" "$stage/archive.tar.gz"
+        if [ -n "${EMPOWER_ARCHIVE:-}" ]; then
+            say "from $EMPOWER_ARCHIVE"
+            cp "$EMPOWER_ARCHIVE" "$stage/archive.tar.gz"
         else
             base="https://github.com/$REPO/releases/download/$tag"
-            say "downloading $base/opfsolve-$plat.tar.gz"
-            get "$base/opfsolve-$plat.tar.gz" "$stage/archive.tar.gz" || die "no opfsolve $tag release for $plat"
+            say "downloading $base/empower-$plat.tar.gz"
+            get "$base/empower-$plat.tar.gz" "$stage/archive.tar.gz" || die "no empower $tag release for $plat"
             get "$base/SHA256SUMS" "$stage/SHA256SUMS" || die "could not download the checksums of release $tag"
-            want=$(awk -v f="opfsolve-$plat.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$stage/SHA256SUMS")
-            [ -n "$want" ] || die "release $tag lists no checksum for opfsolve-$plat.tar.gz"
-            verify "$stage/archive.tar.gz" "$want" "opfsolve-$plat.tar.gz"
+            want=$(awk -v f="empower-$plat.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$stage/SHA256SUMS")
+            [ -n "$want" ] || die "release $tag lists no checksum for empower-$plat.tar.gz"
+            verify "$stage/archive.tar.gz" "$want" "empower-$plat.tar.gz"
             say "checksum verified"
         fi
         mkdir -p "$stage/new"
-        tar xzf "$stage/archive.tar.gz" -C "$stage/new" --strip-components 1 || die "could not unpack the opfsolve archive"
-        [ -x "$stage/new/bin/opfsolve" ] || die "the opfsolve archive has no bin/opfsolve"
+        tar xzf "$stage/archive.tar.gz" -C "$stage/new" --strip-components 1 || die "could not unpack the empower archive"
+        [ -x "$stage/new/bin/empower" ] || die "the empower archive has no bin/empower"
         # Replace what the archive provides; keep ipopt/, hsl/, cases/, and .mamba/.
         for item in "$stage/new"/* "$stage/new"/.[!.]*; do
             [ -e "$item" ] || continue
@@ -253,7 +253,7 @@ main() {
         rm -rf "$stage"
         [ -n "$installed" ] && [ "$installed" != "$tag" ] && say "upgraded from $installed"
     fi
-    say "$("$DIR/bin/opfsolve" --version) and its compiled model library"
+    say "$("$DIR/bin/empower" --version) and its compiled model library"
 
     # compile_hsl FC TOOLS_BIN: build the extracted package in $top into $hsl.
     compile_hsl() {
@@ -274,7 +274,7 @@ main() {
         fi
     }
     # check_hsl: Ipopt solves a small problem with MA27 from $hsl.
-    check_hsl() { "$DIR/bin/opfsolve" --check-hsl --hsl-lib="$hsl" >"$work/check.log" 2>&1; }
+    check_hsl() { "$DIR/bin/empower" --check-hsl --hsl-lib="$hsl" >"$work/check.log" 2>&1; }
 
     # --- 2. HSL source: asked for first, so its compiler downloads alongside Ipopt --
     # Compile the user's own HSL package, optimized for this machine. HSL's personal
@@ -284,16 +284,16 @@ main() {
     hsl_src=""          # a package to build (link or file), if any
     hsl_mode=""         # build | lib | keep | skip
     section "[2/5] HSL MA27 package"
-    if [ -n "${OPFSOLVE_HSL_LIB:-}" ]; then
-        hsl_mode=lib; hsl_lib=$OPFSOLVE_HSL_LIB; say "your library $hsl_lib"
-    elif [ -n "${OPFSOLVE_HSL:-}" ]; then
-        hsl_mode=build; hsl_src=$OPFSOLVE_HSL
+    if [ -n "${EMPOWER_HSL_LIB:-}" ]; then
+        hsl_mode=lib; hsl_lib=$EMPOWER_HSL_LIB; say "your library $hsl_lib"
+    elif [ -n "${EMPOWER_HSL:-}" ]; then
+        hsl_mode=build; hsl_src=$EMPOWER_HSL
     elif [ -e "$hsl" ]; then
         hsl_mode=keep; say "already installed"
-    elif [ "${OPFSOLVE_SKIP_HSL:-}" = 1 ]; then
-        hsl_mode=skip; say "skipped (OPFSOLVE_SKIP_HSL=1)"
+    elif [ "${EMPOWER_SKIP_HSL:-}" = 1 ]; then
+        hsl_mode=skip; say "skipped (EMPOWER_SKIP_HSL=1)"
     else
-        say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
+        say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
         say "  1. request it at $MA27_URL"
         say "  2. HSL emails you a download link (valid for 7 days)"
         link=""
@@ -320,7 +320,7 @@ main() {
 
     # The build works in a private temporary directory: conda-forge's gfortran
     # cannot run from a path with spaces, which the install directory may have.
-    work=$(mktemp -d "${TMPDIR:-/tmp}/opfsolve-hsl.XXXXXX") || die "could not create a temporary directory"
+    work=$(mktemp -d "${TMPDIR:-/tmp}/empower-hsl.XXXXXX") || die "could not create a temporary directory"
     chmod 700 "$work"
     mkdir -p "$DIR/hsl"
     if [ "$hsl_mode" = build ]; then
@@ -345,9 +345,9 @@ main() {
             die "unrecognised HSL package: expected the MA27 package (src/ma27d.f) or Coin-HSL (meson.build)"
         say "package: $(basename "$top")"
 
-        # An existing gfortran first ($OPFSOLVE_FC, or gfortran on PATH; Coin-HSL also
+        # An existing gfortran first ($EMPOWER_FC, or gfortran on PATH; Coin-HSL also
         # needs meson and ninja); otherwise conda-forge's.
-        sysfc="${OPFSOLVE_FC:-$(command -v gfortran 2>/dev/null || true)}"
+        sysfc="${EMPOWER_FC:-$(command -v gfortran 2>/dev/null || true)}"
         use_sys=0
         if [ -n "$sysfc" ] && "$sysfc" --version >/dev/null 2>&1; then
             if [ -f "$top/src/ma27d.f" ] || { command -v meson >/dev/null && command -v ninja >/dev/null; }; then
@@ -445,7 +445,7 @@ main() {
             cat >> "$f" <<BLOCK
 $block_begin
 
-# !! Contents within this block are managed by opfsolve !!
+# !! Contents within this block are managed by empower !!
 
 case ":\$PATH:" in
     *:"$bindir":*)
@@ -467,16 +467,16 @@ BLOCK
     # Drop downloaded packages that are no longer needed.
     if [ -x "$MM" ]; then mamba clean -a -y -q >/dev/null 2>&1 || true; fi
 
-    printf '\n%sopfsolve is installed.%s\n' "$B" "$R"
+    printf '\n%sempower is installed.%s\n' "$B" "$R"
     case ":$PATH:" in
-        *":$bindir:"*) say "try:  opfsolve case118_ieee        (opfsolve --help for options)" ;;
+        *":$bindir:"*) say "try:  empower case118_ieee        (empower --help for options)" ;;
         *)
             if [ "$add_to_path" = yes ]; then
-                say "new terminals have opfsolve on PATH. In this one, first run:"
+                say "new terminals have empower on PATH. In this one, first run:"
                 say "  export PATH=\"$bindir:\$PATH\""
-                say "then try:  opfsolve case118_ieee        (opfsolve --help for options)"
+                say "then try:  empower case118_ieee        (empower --help for options)"
             else
-                say "try:  \"$bindir/opfsolve\" case118_ieee"
+                say "try:  \"$bindir/empower\" case118_ieee"
             fi ;;
     esac
 }

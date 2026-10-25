@@ -68,11 +68,9 @@ version = "1.7.0"
 
 [[deps.ExaModels]]
 deps = ["Adapt", "NLPModels", "Printf", "SolverCore"]
-git-tree-sha1 = "5cd02bf25ce9323f805abde034b9c57549ca6266"
-repo-rev = "a9fbf9ccb5afcfb973bc09ed10d7e6b5f24e07a3"
-repo-url = "https://github.com/madsuite-org/ExaModels.jl.git"
+git-tree-sha1 = "7381949d12fb467dc80c829c79bc7334123e14d5"
 uuid = "1037b233-b668-4ce9-9b63-f9f681f55dd2"
-version = "0.11.2"
+version = "0.12.2"
 
     [deps.ExaModels.extensions]
     ExaModelsJuMP = "JuMP"
@@ -95,17 +93,14 @@ version = "0.11.2"
 
 [[deps.ExaModelsCompiler]]
 deps = ["ExaModels", "JuliaC", "Pkg", "Random", "Serialization", "TOML"]
-git-tree-sha1 = "e6afef576751b80aeaab4b3380f499957da5778a"
-repo-rev = "a9fbf9ccb5afcfb973bc09ed10d7e6b5f24e07a3"
-repo-subdir = "ExaModelsCompiler"
-repo-url = "https://github.com/madsuite-org/ExaModels.jl.git"
+git-tree-sha1 = "06ab4d6d47cd3117f117a80c90af1fd26d6b6251"
 uuid = "3d1e9a26-5b74-4f0c-9a2b-7c8f4e11d3a7"
-version = "0.1.0"
+version = "0.1.1"
 
 [[deps.ExaModelsPower]]
 deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON"]
-git-tree-sha1 = "60caf6e2e767654d6e0b97af998794aa1aed80ec"
-repo-rev = "e0ba41dd6d4377e31a68d352521dbb6d9e0194d0"
+git-tree-sha1 = "2d896a66c9b39aea74265006c36938a7cccfec28"
+repo-rev = "18a04a64a86671ef5141bca61fe7c1433f19b69d"
 repo-url = "https://github.com/madsuite-org/ExaModelsPower.jl.git"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
 version = "0.4.0"
@@ -116,9 +111,9 @@ weakdeps = ["ExaModelsCompiler"]
 
 [[deps.ExaPowerIO]]
 deps = ["LazyArtifacts"]
-git-tree-sha1 = "fc5a3122b24be2e6e8cbf8125708bd79e0128c3d"
+git-tree-sha1 = "4ed6f1bf93563d80083b44c7c694a8313008d24a"
 uuid = "14903efe-9500-4d7f-a589-7ab7e15da6de"
-version = "0.3.1"
+version = "0.3.2"
 
 [[deps.ExprTools]]
 git-tree-sha1 = "d2e49e7efd29719d6f28b891b0e0e159daa9d2b4"

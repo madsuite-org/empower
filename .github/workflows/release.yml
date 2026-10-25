@@ -51,8 +51,8 @@ jobs:
         run: tools/test.sh "${{ matrix.plat }}"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: opfsolve-${{ matrix.plat }}
-          path: opfsolve-${{ matrix.plat }}.tar.gz
+          name: empower-${{ matrix.plat }}
+          path: empower-${{ matrix.plat }}.tar.gz
 
   build-macos:
     name: ${{ matrix.plat }}
@@ -76,8 +76,8 @@ jobs:
         run: tools/test.sh "${{ matrix.plat }}"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: opfsolve-${{ matrix.plat }}
-          path: opfsolve-${{ matrix.plat }}.tar.gz
+          name: empower-${{ matrix.plat }}
+          path: empower-${{ matrix.plat }}.tar.gz
 
   build-windows:
     name: windows-x86_64
@@ -99,8 +99,8 @@ jobs:
         run: tools/test.ps1
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: opfsolve-windows-x86_64
-          path: opfsolve-windows-x86_64.tar.gz
+          name: empower-windows-x86_64
+          path: empower-windows-x86_64.tar.gz
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -112,10 +112,10 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - name: The tag matches the version opfsolve reports
+      - name: The tag matches the version empower reports
         run: |
-          v=$(sed -n 's/^#define VERSION "\(.*\)"$/\1/p' driver/opfsolve.c)
-          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but driver/opfsolve.c says $v"; exit 1; }
+          v=$(sed -n 's/^#define VERSION "\(.*\)"$/\1/p' driver/empower.c)
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but driver/empower.c says $v"; exit 1; }
           grep -q "^## v$v" CHANGELOG.md || { echo "CHANGELOG.md has no entry for v$v"; exit 1; }
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -127,7 +127,7 @@ jobs:
         run: cd dist && sha256sum -- *.tar.gz *.tar > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: dist/opfsolve-*.tar.gz
+          subject-path: dist/empower-*.tar.gz
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |

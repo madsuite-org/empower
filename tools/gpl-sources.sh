@@ -1,7 +1,7 @@
 #!/bin/sh
 # Collect the corresponding source of the GPL and LGPL libraries bundled with the
 # Julia runtime in the release archives (SuiteSparse, GMP, MPFR, libgit2), at the
-# exact versions Julia JULIA_VERSION ships, into OUTDIR/opfsolve-sources-gpl.tar.
+# exact versions Julia JULIA_VERSION ships, into OUTDIR/empower-sources-gpl.tar.
 # The release attaches it next to the archives.
 #
 #   tools/gpl-sources.sh JULIA_VERSION OUTDIR
@@ -24,16 +24,16 @@ gmp=$(ver gmp GMP_VER)
 mpfr=$(ver mpfr MPFR_VER)
 git2=$(ver libgit2 LIBGIT2_BRANCH)
 
-src="$t/opfsolve-sources-gpl"
+src="$t/empower-sources-gpl"
 mkdir -p "$src"
 get "https://github.com/DrTimothyAldenDavis/SuiteSparse/archive/refs/tags/v$ss.tar.gz" "$src/SuiteSparse-$ss.tar.gz"
 get "https://ftp.gnu.org/gnu/gmp/gmp-$gmp.tar.xz" "$src/gmp-$gmp.tar.xz"
 get "https://ftp.gnu.org/gnu/mpfr/mpfr-$mpfr.tar.xz" "$src/mpfr-$mpfr.tar.xz"
 get "https://github.com/libgit2/libgit2/archive/refs/tags/$git2.tar.gz" "$src/libgit2-$git2.tar.gz"
 cat > "$src/README.md" <<README
-# Source of the GPL and LGPL libraries in the opfsolve release archives
+# Source of the GPL and LGPL libraries in the empower release archives
 
-The Julia runtime bundled in the opfsolve archives (Julia $jv) includes these
+The Julia runtime bundled in the empower archives (Julia $jv) includes these
 libraries, built by Julia's BinaryBuilder recipes from the following upstream
 sources, which are included here:
 
@@ -50,5 +50,5 @@ M/MPFR, L/LibGit2), and Julia's own record of these versions is in
 https://github.com/JuliaLang/julia/tree/v$jv/deps.
 README
 mkdir -p "$out"
-tar cf "$out/opfsolve-sources-gpl.tar" -C "$t" opfsolve-sources-gpl
-ls -la "$out/opfsolve-sources-gpl.tar"
+tar cf "$out/empower-sources-gpl.tar" -C "$t" empower-sources-gpl
+ls -la "$out/empower-sources-gpl.tar"

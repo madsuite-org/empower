@@ -1,5 +1,5 @@
 /*
- * opfsolve: solve AC optimal power flow cases with a compiled ExaModelsPower
+ * empower: solve AC optimal power flow cases with a compiled ExaModelsPower
  * model library (cnlp ABI v0.1) and any Ipopt shared library (>= 3.14, which has hsllib).
  *
  * Both libraries are loaded at run time, so the same driver works with the
@@ -54,7 +54,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.5.0"
+#define VERSION "0.6.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
@@ -201,14 +201,14 @@ static int run(char *const args[]) {
 
 /* Download url to path with curl. Returns 0 on success. */
 static int download(const char *url, const char *path) {
-    /* -s without -S: a failed download gets opfsolve's own message, not curl's. */
+    /* -s without -S: a failed download gets empower's own message, not curl's. */
     char *c[] = {"curl", "-fsL", "--proto", "=https", "--tlsv1.2", "-o", (char *)path, (char *)url, NULL};
     int rc = run(c);
     if (rc == -1) die("curl is needed to download %s", url);
     return rc;
 }
 
-/* Release layout: <root>/bin/opfsolve and the model library MODEL_LIB; placed by
+/* Release layout: <root>/bin/empower and the model library MODEL_LIB; placed by
  * the installer: Ipopt (conda-forge) at IPOPT_LIB, the user's own compiled HSL at
  * HSL_LIB, and PGLib-OPF cases in <root>/cases/. */
 static char root[4096];
@@ -248,7 +248,7 @@ static const char *under_root(const char *rel) {
 
 static const char *case_dir(void) {
     static char dir[8192];
-    const char *env = getenv("OPFSOLVE_CASES");
+    const char *env = getenv("EMPOWER_CASES");
     if (env) snprintf(dir, sizeof dir, "%s", env);
     else if (*root) snprintf(dir, sizeof dir, "%s/cases", root);
     else snprintf(dir, sizeof dir, "cases");
@@ -269,9 +269,9 @@ typedef struct {
     int32_t (*jac)(int32_t, const double *, double *);
     int32_t (*hess_structure)(int32_t, int32_t *, int32_t *);
     int32_t (*hess)(int32_t, const double *, const double *, double, double *);
-    int32_t (*nblocks)(int32_t);
-    int32_t (*block)(int32_t, int32_t, int32_t *);
-    int32_t (*block_name)(int32_t, int32_t, uint8_t *, int32_t);
+    /* ExaModelsPower's MATPOWER writer, compiled into the library. */
+    int32_t (*write_matpower)(int32_t, const char *, const double *, const double *,
+                              const double *, const double *, double, const char *);
     int32_t id;
     long nfev, ngev, nconsev, njev, nhev, iters;
     double tfev, tgev, tconsev, tjev, thev;
@@ -291,28 +291,7 @@ static void load_model(Model *M, void *h, const char *p) {
     M->jac = sym(h, p, "jac");
     M->hess_structure = sym(h, p, "hess_structure");
     M->hess = sym(h, p, "hess");
-    M->nblocks = sym(h, p, "nblocks");
-    M->block = sym(h, p, "block");
-    M->block_name = sym(h, p, "block_name");
-}
-
-/* Offset and length of the named variable (kind 0) or constraint (kind 1) block. */
-static int find_block(Model *M, int kind, const char *want, int *off, int *len) {
-    int32_t info[64];
-    int nb = M->nblocks(M->id);
-    for (int k = 0; k < nb; k++) {
-        if (M->block(M->id, k, info) != 0 || info[0] != kind) continue;
-        char name[128];
-        int n = M->block_name(M->id, k, (uint8_t *)name, sizeof name - 1);
-        if (n < 0) continue;
-        name[n < (int)sizeof name - 1 ? n : (int)sizeof name - 1] = 0;
-        if (!strcmp(name, want)) {
-            *off = info[1];
-            *len = info[2];
-            return 1;
-        }
-    }
-    return 0;
+    M->write_matpower = sym(h, p, "write_matpower");
 }
 
 /* --------------------------------------------------------------- Ipopt API */
@@ -428,111 +407,6 @@ static const char *termination_status(int s) {
     case -102: return "MEMORY_LIMIT";
     default: return "OTHER_ERROR";
     }
-}
-
-static const char *primal_status(int s) {
-    switch (s) {
-    case 0: case 6: return "FEASIBLE_POINT";
-    case 1: return "NEARLY_FEASIBLE_POINT";
-    case 2: return "INFEASIBLE_POINT";
-    default: return "UNKNOWN_RESULT_STATUS";
-    }
-}
-
-/* ------------------------------------------------------- MATPOWER tables */
-
-/* The rows of mpc.<name>, as parsed numbers; enough to label the solution. */
-typedef struct {
-    int rows, cols;
-    double *v;
-} Table;
-
-static double baseMVA_of(const char *text) {
-    const char *p = strstr(text, "mpc.baseMVA");
-    if (!p) return 100.0;
-    p = strchr(p, '=');
-    return p ? strtod(p + 1, NULL) : 100.0;
-}
-
-static Table read_table(const char *text, const char *name) {
-    Table t = {0, 0, NULL};
-    char key[64];
-    snprintf(key, sizeof key, "mpc.%s", name);
-    const char *p = text;
-    while ((p = strstr(p, key))) {
-        /* Skip a match inside a % comment on its line. */
-        const char *ls = p;
-        while (ls > text && ls[-1] != '\n') ls--;
-        int commented = memchr(ls, '%', (size_t)(p - ls)) != NULL;
-        const char *q = p + strlen(key);
-        while (*q == ' ' || *q == '\t') q++;
-        if (*q == '=' && !commented) break;
-        p = q;
-    }
-    if (!p) return t;
-    p = strchr(p, '[');
-    if (!p) return t;
-    p++;
-    int cap = 1024;
-    t.v = xmalloc(cap * sizeof(double));
-    int n = 0, col = 0;
-    while (*p) {
-        if (*p == '%') {
-            while (*p && *p != '\n') p++;
-        } else if (*p == ';' || *p == '\n' || *p == ']') {
-            int end = *p == ']';
-            if (col) {
-                if (!t.cols) t.cols = col;
-                if (col < t.cols) /* pad a short row */
-                    for (; col < t.cols; col++) {
-                        if (n == cap) t.v = xrealloc(t.v, (cap *= 2) * sizeof(double));
-                        t.v[n++] = 0;
-                    }
-                t.rows++;
-                col = 0;
-            }
-            if (end) break;
-            p++;
-        } else if (isspace((unsigned char)*p) || *p == ',') {
-            p++;
-        } else {
-            char *end;
-            double x = strtod(p, &end);
-            if (end == p) { p++; continue; }
-            p = end;
-            if (t.cols && col >= t.cols) continue; /* ignore extra columns */
-            if (n == cap) t.v = xrealloc(t.v, (cap *= 2) * sizeof(double));
-            t.v[n++] = x;
-            col++;
-        }
-    }
-    return t;
-}
-
-#define AT(t, r, c) ((t).v[(size_t)(r) * (t).cols + (c)])
-
-/* -------------------------------------------------------------------- JSON */
-
-static void json_num(FILE *f, double v) {
-    if (isfinite(v)) fprintf(f, "%.17g", v);
-    else fputs("null", f);
-}
-
-static void json_str(FILE *f, const char *s) {
-    fputc('"', f);
-    for (; *s; s++) {
-        if (*s == '"' || *s == '\\') fprintf(f, "\\%c", *s);
-        else if ((unsigned char)*s < 0x20) fprintf(f, "\\u%04x", *s);
-        else fputc(*s, f);
-    }
-    fputc('"', f);
-}
-
-static void json_key(FILE *f, int *first, const char *k) {
-    fprintf(f, "%s", *first ? "" : ",");
-    *first = 0;
-    json_str(f, k);
-    fputs(":", f);
 }
 
 /* ---------------------------------------------------------------- options */
@@ -676,18 +550,6 @@ static void case_name(const char *path, char *out, size_t cap) {
     if (dot) *dot = 0;
 }
 
-static char *slurp(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    long n = -1;
-    if (fseek(f, 0, SEEK_END) == 0) n = ftell(f);
-    if (n < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
-    char *s = xmalloc((size_t)n + 1);
-    s[fread(s, 1, n, f)] = 0;
-    fclose(f);
-    return s;
-}
-
 /* ----------------------------------------------------------------- solving */
 
 typedef struct {
@@ -699,11 +561,8 @@ typedef struct {
 
 typedef struct {
     int status, iters, n, m;
-    double obj, t_parse, t_build, t_solve, t_cb, t_total;
+    double obj, t_build, t_solve, t_cb, t_total;
 } Result;
-
-static void write_solution(const char *path, const char *casefile, Ctx *C, Model *M,
-                           const Result *r, const double *x, const double *y);
 
 /* A CSV field, quoted when it holds a comma, quote, or newline. */
 static void csv_field(FILE *f, const char *v) {
@@ -789,10 +648,12 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     step("%s: objective %.10g, %d iterations, %.3f s (%.3f s in model callbacks)",
          termination_status(r->status), r->obj, r->iters, r->t_solve, r->t_cb);
 
-    snprintf(path, sizeof path, "%s/solution.json", out);
-    step("wrote %s/{solution.json, ipopt.log}", out);
+    snprintf(path, sizeof path, "%s/solution.m", out);
+    if (M.write_matpower(M.id, path, x, y, zl, zu, r->obj, termination_status(r->status)) != 0)
+        case_error("could not write %s", path);
+    else
+        step("wrote %s/{solution.m, ipopt.log}", out);
     r->t_total = now() - t_case;
-    write_solution(path, casefile, C, &M, r, x, y);
 
     if (C->summary) {
         csv_field(C->summary, name);
@@ -807,136 +668,6 @@ done:
     if (P) I->free(P);
     free(x); free(xl); free(xu); free(gl); free(gu); free(g); free(y); free(zl); free(zu);
     return rc;
-}
-
-/*
- * PowerModels-style result: solution in per unit, keyed by MATPOWER bus number
- * and by generator and branch row (1-based, out-of-service rows omitted, which
- * is also the order ExaPowerIO builds the model in).
- */
-static void write_solution(const char *path, const char *casefile, Ctx *C, Model *M,
-                           const Result *r, const double *x, const double *y) {
-    FILE *f = fopen(path, "w");
-    if (!f) { case_error("cannot write %s", path); return; }
-    char *text = slurp(casefile);
-    Table bus = read_table(text ? text : "", "bus");
-    Table gen = read_table(text ? text : "", "gen");
-    Table br = read_table(text ? text : "", "branch");
-    double baseMVA = baseMVA_of(text ? text : "");
-    int polar = !strcmp(C->form, "polar");
-    int ova, nva, ovm, nvm, opg, npg, oqg, nqg, op, np, oq, nq;
-    int ok = polar ? find_block(M, 0, "va", &ova, &nva) && find_block(M, 0, "vm", &ovm, &nvm)
-                   : find_block(M, 0, "vr", &ova, &nva) && find_block(M, 0, "vim", &ovm, &nvm);
-    ok = ok && find_block(M, 0, "pg", &opg, &npg) && find_block(M, 0, "qg", &oqg, &nqg) &&
-         find_block(M, 0, "p", &op, &np) && find_block(M, 0, "q", &oq, &nq);
-
-    fputs("{\n", f);
-    fputs("  \"case\": ", f); json_str(f, casefile);
-    fputs(",\n  \"form\": ", f); json_str(f, C->form);
-    fputs(",\n  \"solver\": \"ipopt\"", f);
-    fputs(",\n  \"opfsolve_version\": \"" VERSION "\"", f);
-    fprintf(f, ",\n  \"termination_status\": \"%s\"", termination_status(r->status));
-    fprintf(f, ",\n  \"primal_status\": \"%s\"", primal_status(r->status));
-    fprintf(f, ",\n  \"raw_status\": \"%s\"", status_name(r->status));
-    fputs(",\n  \"objective\": ", f); json_num(f, r->obj);
-    fputs(",\n  \"solve_time\": ", f); json_num(f, r->t_solve);
-    fprintf(f, ",\n  \"iterations\": %d", r->iters);
-    fprintf(f, ",\n  \"stats\": {\"nvar\": %d, \"ncon\": %d, \"time_parse_and_build\": %.6f, "
-               "\"time_solve\": %.6f, \"time_solve_callbacks\": %.6f, \"time_solve_ipopt\": %.6f, "
-               "\"time_total\": %.6f}",
-            r->n, r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb, r->t_total);
-    fputs(",\n  \"solution\": {\n    \"per_unit\": true,\n    \"baseMVA\": ", f);
-    json_num(f, baseMVA);
-
-    /* Active rows of each table, in file order. */
-    int kb = 0, kg = 0, kl = 0, first;
-    char key[64];
-    if (ok && bus.cols >= 2) {
-        fputs(",\n    \"bus\": {", f);
-        first = 1;
-        for (int i = 0; i < bus.rows && kb < nva; i++) {
-            if ((int)AT(bus, i, 1) == 4) continue;
-            snprintf(key, sizeof key, "%d", (int)AT(bus, i, 0));
-            fputs("\n      ", f);
-            json_key(f, &first, key);
-            double a = x[ova + kb], b = x[ovm + kb];
-            double vm = polar ? b : hypot(a, b), va = polar ? a : atan2(b, a);
-            fputs(" {\"vm\": ", f); json_num(f, vm);
-            fputs(", \"va\": ", f); json_num(f, va);
-            if (!polar) {
-                fputs(", \"vr\": ", f); json_num(f, a);
-                fputs(", \"vi\": ", f); json_num(f, b);
-            }
-            fputs("}", f);
-            kb++;
-        }
-        fputs("\n    }", f);
-    }
-    if (ok && gen.cols >= 8) {
-        fputs(",\n    \"gen\": {", f);
-        first = 1;
-        for (int i = 0; i < gen.rows && kg < npg; i++) {
-            if (AT(gen, i, 7) == 0) continue;
-            snprintf(key, sizeof key, "%d", i + 1);
-            fputs("\n      ", f);
-            json_key(f, &first, key);
-            fputs(" {\"pg\": ", f); json_num(f, x[opg + kg]);
-            fputs(", \"qg\": ", f); json_num(f, x[oqg + kg]);
-            fputs("}", f);
-            kg++;
-        }
-        fputs("\n    }", f);
-    }
-    if (ok && br.cols >= 11) {
-        int nbr = np / 2;
-        fputs(",\n    \"branch\": {", f);
-        first = 1;
-        for (int i = 0; i < br.rows && kl < nbr; i++) {
-            if (AT(br, i, 10) == 0) continue;
-            snprintf(key, sizeof key, "%d", i + 1);
-            fputs("\n      ", f);
-            json_key(f, &first, key);
-            fputs(" {\"pf\": ", f); json_num(f, x[op + kl]);
-            fputs(", \"qf\": ", f); json_num(f, x[oq + kl]);
-            fputs(", \"pt\": ", f); json_num(f, x[op + nbr + kl]);
-            fputs(", \"qt\": ", f); json_num(f, x[oq + nbr + kl]);
-            fputs("}", f);
-            kl++;
-        }
-        fputs("\n    }", f);
-    }
-    fputs("\n  }", f);
-
-    /* Ipopt's constraint multipliers by model block, for anyone who wants the duals. */
-    fputs(",\n  \"constraint_multipliers\": {", f);
-    first = 1;
-    int32_t info[64];
-    int nb = M->nblocks(M->id);
-    for (int k = 0; k < nb; k++) {
-        if (M->block(M->id, k, info) != 0 || info[0] != 1) continue;
-        char bname[128];
-        int len = M->block_name(M->id, k, (uint8_t *)bname, sizeof bname - 1);
-        if (len < 0) continue;
-        bname[len < (int)sizeof bname - 1 ? len : (int)sizeof bname - 1] = 0;
-        fputs("\n    ", f);
-        json_key(f, &first, bname);
-        fputs(" [", f);
-        for (int i = 0; i < info[2]; i++) {
-            if (i) fputc(',', f);
-            json_num(f, y[info[1] + i]);
-        }
-        fputc(']', f);
-    }
-    fputs("\n  }\n}\n", f);
-    fclose(f);
-    if (!ok)
-        case_error("%s: variable blocks not found; solution written without the per-bus table",
-                   casefile);
-    else if (kb != nva || kg != npg || 2 * kl != np)
-        case_error("%s: case tables (%d buses, %d gens, %d branches) do not match the model "
-                   "(%d, %d, %d)",
-                   casefile, kb, kg, kl, nva, npg, np / 2);
-    free(bus.v); free(gen.v); free(br.v); free(text);
 }
 
 /* min (x - 1)^2: one variable, no constraints. */
@@ -1010,7 +741,7 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     time_t t = time(NULL);
     char date[64];
     strftime(date, sizeof date, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
-    fprintf(f, "date: %s\nopfsolve: %s\n", date, VERSION);
+    fprintf(f, "date: %s\nempower: %s\n", date, VERSION);
 #ifdef _WIN32
     SYSTEM_INFO si;
     GetSystemInfo(&si);
@@ -1054,30 +785,31 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
-    "usage: opfsolve <case>... [--form=polar|rect] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
+    "usage: empower <case>... [--form=polar|rect|dc] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
-    "Solves the AC optimal power flow problem for one or more MATPOWER cases.\n"
+    "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
     "\n"
     "  <case>       a MATPOWER file, or a PGLib-OPF case name (case118_ieee,\n"
     "               pglib_opf_case118_ieee.m), downloaded on first use; \"all\" solves\n"
     "               every PGLib-OPF v" PGLIB_VERSION " case for typical operating conditions\n"
-    "  --form       voltage formulation: polar (default) or rect\n"
+    "  --form       formulation: polar (default) or rect (AC), or dc\n"
     "  --solver     ipopt (default; the only solver in this release)\n"
     "  --options    solver options separated by spaces or commas,\n"
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
-    "  --output     output directory (default ./opfsolve-results)\n"
+    "  --output     output directory (default ./empower-results)\n"
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
-    "               $OPFSOLVE_HSL_LIB. MA27 is the linear solver unless --options sets\n"
+    "               $EMPOWER_HSL_LIB. MA27 is the linear solver unless --options sets\n"
     "               linear_solver\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
-    "               $OPFSOLVE_IPOPT_LIB)\n"
+    "               $EMPOWER_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp, from the release)\n"
     "\n"
-    "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
-    "and <output>/<case>/ipopt.log, and a row of <output>/summary.csv (rewritten each run);\n"
+    "For each case, writes <output>/<case>/solution.m (the solved case, in MATPOWER's\n"
+    "savecase format) and <output>/<case>/ipopt.log, and a row of <output>/summary.csv\n"
+    "(rewritten each run);\n"
     "<output>/system.txt records the machine, the libraries, and the command.\n";
 
 /* Accept both --name=value and --name value. */
@@ -1095,9 +827,9 @@ static const char *flag(const char *a, const char *name, int *i, int argc, char 
 int main(int argc, char **argv) {
     t_start = now();
     find_root();
-    const char *modellib = getenv("OPFSOLVE_MODEL_LIB"), *ipoptlib = getenv("OPFSOLVE_IPOPT_LIB"),
-               *hsllib = getenv("OPFSOLVE_HSL_LIB"),
-               *form = "polar", *solver = "ipopt", *out = "opfsolve-results", *v;
+    const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
+               *hsllib = getenv("EMPOWER_HSL_LIB"),
+               *form = "polar", *solver = "ipopt", *out = "empower-results", *v;
     List args = {0};
     int check_hsl = 0;
 
@@ -1107,7 +839,7 @@ int main(int argc, char **argv) {
             fputs(usage, stdout);
             return 0;
         } else if (!strcmp(a, "--version")) {
-            puts("opfsolve " VERSION);
+            puts("empower " VERSION);
             return 0;
         }
         if (!strcmp(a, "--check-hsl")) { check_hsl = 1; continue; }
@@ -1126,19 +858,20 @@ int main(int argc, char **argv) {
     C.form = form;
     if (!strcmp(form, "polar")) C.model = "acp";
     else if (!strcmp(form, "rect")) C.model = "acr";
-    else die("--form must be polar or rect, got %s", form);
+    else if (!strcmp(form, "dc")) C.model = "dcp";
+    else die("--form must be polar, rect or dc, got %s", form);
     if (strcmp(solver, "ipopt")) die("--solver must be ipopt, got %s", solver);
     if (!modellib) modellib = under_root(MODEL_LIB);
-    if (!modellib) die("no model library: pass --model-lib or set OPFSOLVE_MODEL_LIB");
+    if (!modellib) die("no model library: pass --model-lib or set EMPOWER_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);
-    if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set OPFSOLVE_IPOPT_LIB");
+    if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set EMPOWER_IPOPT_LIB");
     if (hsllib && !*hsllib) hsllib = NULL;
     if (!hsllib) hsllib = under_root(HSL_LIB);
     if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);
     C.hsllib = hsllib;
 
     char src[512];
-    printf("opfsolve %s, %s form, Ipopt\n", VERSION, form);
+    printf("empower %s, %s form, Ipopt\n", VERSION, form);
     printf("  model    %s\n", modellib);
     printf("  ipopt    %s\n", ipoptlib);
     if (read_source("ipopt", src, sizeof src)) printf("           %s\n", src);
@@ -1221,7 +954,7 @@ int main(int argc, char **argv) {
             if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
             die("no HSL library with MA27. Request the free licence at\n  %s\n"
                 "then rerun the installer with the download link from the email, or pass\n"
-                "--hsl-lib=PATH (or set OPFSOLVE_HSL_LIB) for an HSL library you already have",
+                "--hsl-lib=PATH (or set EMPOWER_HSL_LIB) for an HSL library you already have",
                 MA27_URL);
         }
         C.linear_solver = "ma27";

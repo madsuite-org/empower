@@ -1,5 +1,5 @@
 #!/bin/sh
-# Rule: an opfsolve release never contains compiled Ipopt or HSL code.
+# Rule: an empower release never contains compiled Ipopt or HSL code.
 # Ipopt is downloaded by the installer from conda-forge, and HSL is compiled on
 # the user's machine from the user's own licensed copy.
 #

@@ -1,31 +1,31 @@
-# Install the opfsolve command on Windows: compiled ExaModelsPower AC OPF models,
+# Install the empower command on Windows: compiled ExaModelsPower AC OPF models,
 # Ipopt from conda-forge, and the user's own HSL MA27 compiled on this machine.
 # In PowerShell:
 #
-#   irm https://raw.githubusercontent.com/madsuite-org/opfsolve/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | iex
 #
-# Then run `opfsolve <case>...` (see `opfsolve --help`).
+# Then run `empower <case>...` (see `empower --help`).
 #
-# Like juliaup, it installs into ~\.opfsolve, adds ~\.opfsolve\bin to the user
-# PATH (and to this session), and asks for confirmation unless OPFSOLVE_YES=1.
+# Like juliaup, it installs into ~\.empower, adds ~\.empower\bin to the user
+# PATH (and to this session), and asks for confirmation unless EMPOWER_YES=1.
 # Running it again upgrades to the latest release.
 #
 # Environment:
-#   OPFSOLVE_YES=1          accept the defaults without asking
-#   OPFSOLVE_DIR            install directory (default ~\.opfsolve)
-#   OPFSOLVE_ADD_TO_PATH    yes (default) or no
-#   OPFSOLVE_HSL            your HSL download link (from HSL's email) or the
+#   EMPOWER_YES=1          accept the defaults without asking
+#   EMPOWER_DIR            install directory (default ~\.empower)
+#   EMPOWER_ADD_TO_PATH    yes (default) or no
+#   EMPOWER_HSL            your HSL download link (from HSL's email) or the
 #                           downloaded .tar.gz/.zip, compiled on this machine
-#   OPFSOLVE_HSL_LIB        an HSL library you already have, used as is
-#   OPFSOLVE_UNINSTALL=1    remove the install directory and its user PATH entry
-#   OPFSOLVE_VERSION        release tag (default: latest)
-#   OPFSOLVE_ARCHIVE        local release archive to install instead of downloading one
-#   OPFSOLVE_FC             the Fortran compiler to try first (default gfortran on PATH)
-#   OPFSOLVE_SKIP_HSL=1     install without HSL (for testing only)
+#   EMPOWER_HSL_LIB        an HSL library you already have, used as is
+#   EMPOWER_UNINSTALL=1    remove the install directory and its user PATH entry
+#   EMPOWER_VERSION        release tag (default: latest)
+#   EMPOWER_ARCHIVE        local release archive to install instead of downloading one
+#   EMPOWER_FC             the Fortran compiler to try first (default gfortran on PATH)
+#   EMPOWER_SKIP_HSL=1     install without HSL (for testing only)
 #
-# HSL MA27 is required, and opfsolve never distributes it. Request the free
+# HSL MA27 is required, and empower never distributes it. Request the free
 # personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/; HSL emails
-# a download link, which the script asks for if OPFSOLVE_HSL is not set.
+# a download link, which the script asks for if EMPOWER_HSL is not set.
 #
 # Everything runs inside one script block: a download cut short does not parse
 # and so runs nothing, and nothing leaks into the calling session apart from
@@ -40,11 +40,11 @@ try {
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repo = 'madsuite-org/opfsolve'
-$Dir = if ($env:OPFSOLVE_DIR) { [IO.Path]::GetFullPath($env:OPFSOLVE_DIR) } else { Join-Path $HOME '.opfsolve' }
-$AddToPath = if ($env:OPFSOLVE_ADD_TO_PATH) { $env:OPFSOLVE_ADD_TO_PATH } else { 'yes' }
+$Repo = 'madsuite-org/empower'
+$Dir = if ($env:EMPOWER_DIR) { [IO.Path]::GetFullPath($env:EMPOWER_DIR) } else { Join-Path $HOME '.empower' }
+$AddToPath = if ($env:EMPOWER_ADD_TO_PATH) { $env:EMPOWER_ADD_TO_PATH } else { 'yes' }
 $Interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
-$Version = if ($env:OPFSOLVE_VERSION) { $env:OPFSOLVE_VERSION } else { 'latest' }
+$Version = if ($env:EMPOWER_VERSION) { $env:EMPOWER_VERSION } else { 'latest' }
 $IpoptSpec = 'ipopt=3.14.20'
 $MambaVersion = '2.9.0-0'
 $MambaSha256 = 'a6d804394b2418991c4e29562853eaace2f2ce9d9da661a98e74e02e8dbb44b0'
@@ -55,7 +55,7 @@ $BinDir = Join-Path $Dir 'bin'
 function Say($msg) { Write-Host "    $msg" }
 function Section($msg) { Write-Host ''; Write-Host $msg -ForegroundColor Cyan }
 # `throw`, not `exit`: under `irm | iex`, exit would close the PowerShell window.
-function Fail($msg) { throw "opfsolve install: $msg" }
+function Fail($msg) { throw "empower install: $msg" }
 function Get-Url($url, $out) {
     curl.exe --proto '=https' --tlsv1.2 -fsSL -o $out $url
     return $LASTEXITCODE -eq 0
@@ -78,8 +78,8 @@ function Set-UserPath([string[]]$parts) {
     $key.SetValue('Path', ($parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
     $key.Close()
     # Tell running programs (Explorer, new terminals) that the environment changed.
-    [Environment]::SetEnvironmentVariable('OPFSOLVE_PATH_REFRESH', '1', 'User')
-    [Environment]::SetEnvironmentVariable('OPFSOLVE_PATH_REFRESH', $null, 'User')
+    [Environment]::SetEnvironmentVariable('EMPOWER_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('EMPOWER_PATH_REFRESH', $null, 'User')
 }
 
 foreach ($tool in 'curl.exe', 'tar.exe') {
@@ -87,15 +87,15 @@ foreach ($tool in 'curl.exe', 'tar.exe') {
 }
 
 # --- uninstall ---
-if ($env:OPFSOLVE_UNINSTALL -eq '1') {
-    Write-Host 'opfsolve uninstall' -ForegroundColor Cyan
+if ($env:EMPOWER_UNINSTALL -eq '1') {
+    Write-Host 'empower uninstall' -ForegroundColor Cyan
     Say "remove: $Dir, and $BinDir from the user PATH"
-    if ($env:OPFSOLVE_YES -ne '1') {
-        if (-not $Interactive) { Fail 'unable to ask for confirmation; set $env:OPFSOLVE_YES=1' }
+    if ($env:EMPOWER_YES -ne '1') {
+        if (-not $Interactive) { Fail 'unable to ask for confirmation; set $env:EMPOWER_YES=1' }
         $answer = Read-Host '    proceed? [y/N]'
         if ($answer -notmatch '^(y|yes)$') { Fail 'cancelled' }
     }
-    if ((Test-Path $Dir) -and -not (Test-Path (Join-Path $BinDir 'opfsolve.exe'))) { Fail "$Dir does not look like an opfsolve install; not removing it" }
+    if ((Test-Path $Dir) -and -not (Test-Path (Join-Path $BinDir 'empower.exe'))) { Fail "$Dir does not look like an empower install; not removing it" }
     Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
     $parts = Get-UserPath
     if ($parts -contains $BinDir) { Set-UserPath @($parts | Where-Object { $_ -ne $BinDir }) }
@@ -107,26 +107,26 @@ if ($env:OPFSOLVE_UNINSTALL -eq '1') {
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -ne 'AMD64') { Fail "unsupported architecture: $arch (Windows x86_64 only)" }
 
-# The release to install: the latest one unless OPFSOLVE_VERSION names a tag.
-if ($env:OPFSOLVE_ARCHIVE) { $Tag = 'local archive' }
+# The release to install: the latest one unless EMPOWER_VERSION names a tag.
+if ($env:EMPOWER_ARCHIVE) { $Tag = 'local archive' }
 elseif ($Version -eq 'latest') {
     $eff = curl.exe --proto '=https' --tlsv1.2 -fsSLI -o NUL -w '%{url_effective}' "https://github.com/$Repo/releases/latest"
     $Tag = ($eff -replace '.*/tag/', '')
-    if ($Tag -notmatch '^v') { Fail 'could not find the latest opfsolve release' }
+    if ($Tag -notmatch '^v') { Fail 'could not find the latest empower release' }
 } else { $Tag = $Version }
 
-Write-Host 'opfsolve installer' -ForegroundColor Cyan
+Write-Host 'empower installer' -ForegroundColor Cyan
 Say "platform:      $Plat"
 Say "release:       $Tag"
 Say "install into:  $Dir"
 Say "add to PATH:   $AddToPath ($BinDir, in the user PATH)"
-if ($env:OPFSOLVE_YES -ne '1') {
-    if (-not $Interactive) { Fail 'unable to ask for confirmation; set $env:OPFSOLVE_YES=1 to accept the defaults' }
+if ($env:EMPOWER_YES -ne '1') {
+    if (-not $Interactive) { Fail 'unable to ask for confirmation; set $env:EMPOWER_YES=1 to accept the defaults' }
     $answer = Read-Host '    proceed? [Y/n]'
     if ($answer -and $answer -notmatch '^(y|yes)$') { Fail 'cancelled' }
 }
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-$Exe = Join-Path $BinDir 'opfsolve.exe'
+$Exe = Join-Path $BinDir 'empower.exe'
 $HslDir = Join-Path $Dir 'hsl'
 $HslLib = Join-Path $HslDir 'libhsl.dll'
 
@@ -151,34 +151,34 @@ function Lock-Args($name, [string[]]$spec) {
     return @('-c', 'conda-forge', '--override-channels') + $spec
 }
 
-# --- 1. opfsolve: download, verify, unpack aside, then swap in ---
-Section '[1/5] opfsolve'
+# --- 1. empower: download, verify, unpack aside, then swap in ---
+Section '[1/5] empower'
 $ReleaseFile = Join-Path $Dir 'RELEASE'
 $Installed = if (Test-Path $ReleaseFile) { (Get-Content $ReleaseFile -TotalCount 1) } else { '' }
-if ((Test-Path $Exe) -and ($Installed -eq $Tag) -and -not $env:OPFSOLVE_ARCHIVE) {
+if ((Test-Path $Exe) -and ($Installed -eq $Tag) -and -not $env:EMPOWER_ARCHIVE) {
     Say "$Tag is installed"
 } else {
     $Stage = Join-Path $Dir '.staging'
     Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $Stage 'new') | Out-Null
     $tgz = Join-Path $Stage 'archive.tar.gz'
-    if ($env:OPFSOLVE_ARCHIVE) {
-        Say "from $env:OPFSOLVE_ARCHIVE"
-        Copy-Item $env:OPFSOLVE_ARCHIVE $tgz
+    if ($env:EMPOWER_ARCHIVE) {
+        Say "from $env:EMPOWER_ARCHIVE"
+        Copy-Item $env:EMPOWER_ARCHIVE $tgz
     } else {
         $base = "https://github.com/$Repo/releases/download/$Tag"
-        Say "downloading $base/opfsolve-$Plat.tar.gz"
-        if (-not (Get-Url "$base/opfsolve-$Plat.tar.gz" $tgz)) { Fail "no opfsolve $Tag release for $Plat" }
+        Say "downloading $base/empower-$Plat.tar.gz"
+        if (-not (Get-Url "$base/empower-$Plat.tar.gz" $tgz)) { Fail "no empower $Tag release for $Plat" }
         $sums = Join-Path $Stage 'SHA256SUMS'
         if (-not (Get-Url "$base/SHA256SUMS" $sums)) { Fail "could not download the checksums of release $Tag" }
-        $line = Get-Content $sums | Where-Object { ($_ -split '\s+')[1] -match "^\*?opfsolve-$Plat\.tar\.gz$" } | Select-Object -First 1
-        if (-not $line) { Fail "release $Tag lists no checksum for opfsolve-$Plat.tar.gz" }
-        Test-Sha256 $tgz (($line -split '\s+')[0]) "opfsolve-$Plat.tar.gz"
+        $line = Get-Content $sums | Where-Object { ($_ -split '\s+')[1] -match "^\*?empower-$Plat\.tar\.gz$" } | Select-Object -First 1
+        if (-not $line) { Fail "release $Tag lists no checksum for empower-$Plat.tar.gz" }
+        Test-Sha256 $tgz (($line -split '\s+')[0]) "empower-$Plat.tar.gz"
         Say 'checksum verified'
     }
     tar.exe -xzf $tgz -C (Join-Path $Stage 'new') --strip-components 1
-    if ($LASTEXITCODE -ne 0) { Fail 'could not unpack the opfsolve archive' }
-    if (-not (Test-Path (Join-Path $Stage 'new\bin\opfsolve.exe'))) { Fail 'the opfsolve archive has no bin\opfsolve.exe' }
+    if ($LASTEXITCODE -ne 0) { Fail 'could not unpack the empower archive' }
+    if (-not (Test-Path (Join-Path $Stage 'new\bin\empower.exe'))) { Fail 'the empower archive has no bin\empower.exe' }
     # Replace what the archive provides; keep ipopt, hsl, cases, and .mamba.
     foreach ($item in Get-ChildItem -Force (Join-Path $Stage 'new')) {
         $dest = Join-Path $Dir $item.Name
@@ -197,12 +197,12 @@ Say "$(& $Exe --version) and its compiled model library"
 # the licensee's use on a particular platform; the result stays on this machine.
 Section '[2/5] HSL MA27 package'
 $HslMode = ''; $HslSrc = ''; $UserLib = ''
-if ($env:OPFSOLVE_HSL_LIB) { $HslMode = 'lib'; $UserLib = [IO.Path]::GetFullPath($env:OPFSOLVE_HSL_LIB); Say "your library $UserLib" }
-elseif ($env:OPFSOLVE_HSL) { $HslMode = 'build'; $HslSrc = $env:OPFSOLVE_HSL }
+if ($env:EMPOWER_HSL_LIB) { $HslMode = 'lib'; $UserLib = [IO.Path]::GetFullPath($env:EMPOWER_HSL_LIB); Say "your library $UserLib" }
+elseif ($env:EMPOWER_HSL) { $HslMode = 'build'; $HslSrc = $env:EMPOWER_HSL }
 elseif (Test-Path $HslLib) { $HslMode = 'keep'; Say 'already installed' }
-elseif ($env:OPFSOLVE_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (OPFSOLVE_SKIP_HSL=1)' }
+elseif ($env:EMPOWER_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (EMPOWER_SKIP_HSL=1)' }
 else {
-    Say "opfsolve needs HSL MA27, which you download yourself under HSL's free personal licence:"
+    Say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
     Say "  1. request it at $Ma27Url"
     Say '  2. HSL emails you a download link (valid for 7 days)'
     $link = ''
@@ -210,14 +210,14 @@ else {
         try { Start-Process $Ma27Url; Say 'opened the request page in your browser' } catch { }
         $link = Read-Host '    paste the download link (or a path to the package or an HSL library)'
     }
-    if (-not $link) { Fail "no HSL download link. Rerun with `$env:OPFSOLVE_HSL='<download link from the email>'" }
+    if (-not $link) { Fail "no HSL download link. Rerun with `$env:EMPOWER_HSL='<download link from the email>'" }
     if ($link -notmatch '^https?://') { $link = [IO.Path]::GetFullPath($link) }
     if ($link -match '\.dll$') { $HslMode = 'lib'; $UserLib = $link } else { $HslMode = 'build'; $HslSrc = $link }
 }
 
 # The build works in a private temporary directory, under its short (8.3) name
 # when the path has spaces: conda-forge's gfortran cannot run from such a path.
-$Work = Join-Path ([IO.Path]::GetTempPath()) ("opfsolve-hsl-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$Work = Join-Path ([IO.Path]::GetTempPath()) ("empower-hsl-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 if ($Work -match ' ') {
     try { $Work = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($Work).ShortPath } catch { }
@@ -258,8 +258,8 @@ if ($HslMode -eq 'build') {
     if ($top) { $Ma27 = Join-Path $top.FullName 'src\ma27d.f' }
     if (-not $top -or -not (Test-Path $Ma27)) { Fail 'unrecognised HSL package: expected the MA27 package (src\ma27d.f)' }
     Say "package: $($top.Name)"
-    # An existing gfortran first ($env:OPFSOLVE_FC, or gfortran on PATH).
-    $sys = if ($env:OPFSOLVE_FC) { $env:OPFSOLVE_FC } else { (Get-Command gfortran -ErrorAction SilentlyContinue).Source }
+    # An existing gfortran first ($env:EMPOWER_FC, or gfortran on PATH).
+    $sys = if ($env:EMPOWER_FC) { $env:EMPOWER_FC } else { (Get-Command gfortran -ErrorAction SilentlyContinue).Source }
     if ($sys) { $Fc = $sys; Say "compiler: $((& $sys --version)[0]) (yours)" } else { $ToolsProc = Start-Tools }
 }
 
@@ -324,7 +324,7 @@ switch ($HslMode) {
     }
     'keep' {
         Section '[4/5] HSL MA27'
-        if (-not (Test-Hsl)) { Fail 'the installed HSL library no longer works with Ipopt; rerun with $env:OPFSOLVE_HSL set' }
+        if (-not (Test-Hsl)) { Fail 'the installed HSL library no longer works with Ipopt; rerun with $env:EMPOWER_HSL set' }
         Say "$(Get-Content (Join-Path $HslDir 'SOURCE') -ErrorAction SilentlyContinue): $HslLib (MA27 checked)"
     }
 }
@@ -338,15 +338,15 @@ if ($AddToPath -match '^(yes|1)$') {
     if (@($env:Path -split ';') -notcontains $BinDir) { $env:Path = "$BinDir;$env:Path" }
     Say "$BinDir added to the user PATH and to this session"
 } else {
-    Say 'left unchanged (OPFSOLVE_ADD_TO_PATH=no)'
+    Say 'left unchanged (EMPOWER_ADD_TO_PATH=no)'
 }
 
 # Drop downloaded packages that are no longer needed.
 if (Test-Path $Mamba) { Invoke-Mamba clean -a -y -q | Out-Null }
 
 Write-Host ''
-Write-Host 'opfsolve is installed.' -ForegroundColor Cyan
-if ($AddToPath -match '^(yes|1)$') { Say 'try:  opfsolve case118_ieee        (opfsolve --help for options)' }
+Write-Host 'empower is installed.' -ForegroundColor Cyan
+if ($AddToPath -match '^(yes|1)$') { Say 'try:  empower case118_ieee        (empower --help for options)' }
 else { Say "try:  & '$Exe' case118_ieee" }
 } finally {
     $ErrorActionPreference = $SavedErrorAction

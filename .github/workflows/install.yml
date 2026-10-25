@@ -1,6 +1,6 @@
 name: Install
 
-# Runs the published one-line installer, then opfsolve, on each supported
+# Runs the published one-line installer, then empower, on each supported
 # platform against the latest release.
 on:
   # Called by the Release workflow once a release is published (a release
@@ -23,7 +23,7 @@ permissions:
 
 env:
   # CI has no HSL licence: install without HSL and run with an explicit MUMPS.
-  OPFSOLVE_SKIP_HSL: "1"
+  EMPOWER_SKIP_HSL: "1"
   RAW: https://raw.githubusercontent.com/${{ github.repository }}/${{ inputs.ref || github.sha }}
 
 jobs:
@@ -37,18 +37,18 @@ jobs:
     steps:
       - name: One-line install
         run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y
-      - name: opfsolve in a new shell
+      - name: empower in a new shell
         run: |
           # A new shell reads the startup files the installer edited.
           if [ "$RUNNER_OS" = macOS ]; then sh_new="zsh -ic"; else sh_new="bash -lic"; fi
-          $sh_new 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
-          cat opfsolve-results/summary.csv opfsolve-results/system.txt
-          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
+          $sh_new 'empower case14_ieee case118_ieee --options=linear_solver=mumps'
+          cat empower-results/summary.csv empower-results/system.txt
+          test "$(grep -c LOCALLY_SOLVED empower-results/summary.csv)" = 2
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         if: always()
         with:
           name: results-${{ matrix.runner }}
-          path: opfsolve-results
+          path: empower-results
 
   windows:
     name: ${{ matrix.runner }}
@@ -58,19 +58,19 @@ jobs:
         runner: [windows-2022, windows-2025]
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: One-line install, then opfsolve in the same session
+      - name: One-line install, then empower in the same session
         shell: powershell
         run: |
-          $env:OPFSOLVE_YES = '1'
+          $env:EMPOWER_YES = '1'
           irm "$env:RAW/install.ps1" | iex
-          opfsolve case14_ieee case118_ieee --options=linear_solver=mumps
-          Get-Content opfsolve-results\summary.csv, opfsolve-results\system.txt
-          if ((Select-String -Pattern LOCALLY_SOLVED -Path opfsolve-results\summary.csv).Count -ne 2) { exit 1 }
-      - name: The user PATH lists opfsolve for future sessions
+          empower case14_ieee case118_ieee --options=linear_solver=mumps
+          Get-Content empower-results\summary.csv, empower-results\system.txt
+          if ((Select-String -Pattern LOCALLY_SOLVED -Path empower-results\summary.csv).Count -ne 2) { exit 1 }
+      - name: The user PATH lists empower for future sessions
         shell: powershell
         run: |
           $p = [Environment]::GetEnvironmentVariable('Path', 'User')
-          if (-not ($p -split ';' | Where-Object { $_ -eq (Join-Path $HOME '.opfsolve\bin') })) { exit 1 }
+          if (-not ($p -split ';' | Where-Object { $_ -eq (Join-Path $HOME '.empower\bin') })) { exit 1 }
 
   container:
     name: ${{ matrix.image }}
@@ -94,11 +94,11 @@ jobs:
       - run: ${{ matrix.deps }}
       - name: One-line install
         run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y
-      - name: opfsolve in a new shell
+      - name: empower in a new shell
         run: |
-          bash -lic 'opfsolve case14_ieee case118_ieee --options=linear_solver=mumps'
-          cat opfsolve-results/summary.csv
-          test "$(grep -c LOCALLY_SOLVED opfsolve-results/summary.csv)" = 2
+          bash -lic 'empower case14_ieee case118_ieee --options=linear_solver=mumps'
+          cat empower-results/summary.csv
+          test "$(grep -c LOCALLY_SOLVED empower-results/summary.csv)" = 2
 
   # Re-running, an install directory with spaces, the PATH block, and uninstall.
   lifecycle:
@@ -110,15 +110,15 @@ jobs:
           for i in 1 2; do
             curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y --path "$HOME/my opf"
           done
-          test "$(grep -c '>>> opfsolve initialize >>>' ~/.bashrc)" = 1
-      - name: opfsolve in a new shell
+          test "$(grep -c '>>> empower initialize >>>' ~/.bashrc)" = 1
+      - name: empower in a new shell
         run: |
-          bash -lic 'opfsolve case14_ieee --options=linear_solver=mumps'
-          grep -q LOCALLY_SOLVED opfsolve-results/summary.csv
+          bash -lic 'empower case14_ieee --options=linear_solver=mumps'
+          grep -q LOCALLY_SOLVED empower-results/summary.csv
       - name: Uninstall
         run: |
           curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- -y --path "$HOME/my opf" --uninstall
           test ! -e "$HOME/my opf"
-          ! grep -q 'opfsolve initialize' ~/.bashrc ~/.profile
+          ! grep -q 'empower initialize' ~/.bashrc ~/.profile
       - name: Help works when piped
         run: curl --proto '=https' --tlsv1.2 -fsSL "$RAW/install.sh" | sh -s -- --help | grep -q 'Options:'
