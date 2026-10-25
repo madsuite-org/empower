@@ -62,7 +62,7 @@ opfsolve case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options
 
 | File | Contents |
 |---|---|
-| `summary.csv` | One row per case: termination status, objective, iterations, problem size, and the time to parse and build the model and to solve (split into model callbacks and Ipopt). |
+| `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, and the time to parse and build the model and to solve (split into model callbacks and Ipopt). |
 | `<case>/solution.json` | The result in the layout PowerModels.jl uses: `termination_status`, `primal_status`, `objective`, `solve_time`, and `solution` with `bus` (`vm`, `va`), `gen` (`pg`, `qg`), and `branch` (`pf`, `qf`, `pt`, `qt`) in per unit, keyed by MATPOWER bus number and by generator and branch row. Out-of-service components are omitted. Ipopt's constraint multipliers are under `constraint_multipliers`, by model constraint block. |
 | `<case>/ipopt.log` | Full Ipopt output. |
 | `system.txt` | The date, OS, CPU, opfsolve version, the Ipopt and HSL libraries used (and where they came from), and the command. |

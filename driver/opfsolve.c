@@ -1077,7 +1077,7 @@ static const char *usage =
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp, from the release)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.json (PowerModels-style result)\n"
-    "and <output>/<case>/ipopt.log, and appends a row to <output>/summary.csv;\n"
+    "and <output>/<case>/ipopt.log, and a row of <output>/summary.csv (rewritten each run);\n"
     "<output>/system.txt records the machine, the libraries, and the command.\n";
 
 /* Accept both --name=value and --name value. */
@@ -1232,13 +1232,12 @@ int main(int argc, char **argv) {
     write_system(out, ipoptlib, C.hsllib, argc, argv);
     char path[8192];
     snprintf(path, sizeof path, "%s/summary.csv", out);
-    int fresh = access(path, F_OK) != 0;
-    C.summary = fopen(path, "a");
+    /* A fresh summary per run: it describes this run only, like system.txt. */
+    C.summary = fopen(path, "w");
     if (!C.summary) die("cannot write %s", path);
-    if (fresh)
-        fputs("case,form,termination_status,raw_status,objective,iterations,nvar,ncon,"
-              "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt\n",
-              C.summary);
+    fputs("case,form,termination_status,raw_status,objective,iterations,nvar,ncon,"
+          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt\n",
+          C.summary);
 
     int solved = 0, failed = 0;
     Result *res = xcalloc(cases.n, sizeof *res);

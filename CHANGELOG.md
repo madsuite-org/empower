@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `summary.csv` is rewritten each run instead of appended to, so it describes one run, like `system.txt`.
+
 ## v0.5.0
 
 - Installers: install atomically (download, verify, unpack aside, swap in), upgrade on re-run, verify release archives against `SHA256SUMS` and micromamba against its published SHA-256, HTTPS only, `--uninstall`, install directories with spaces, and the whole script in one function so a truncated download runs nothing. The PowerShell installer restores the session's preferences and keeps `%VARIABLES%` in the user PATH.
