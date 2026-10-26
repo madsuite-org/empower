@@ -68,9 +68,9 @@ version = "1.7.0"
 
 [[deps.ExaModels]]
 deps = ["Adapt", "NLPModels", "Printf", "SolverCore"]
-git-tree-sha1 = "7381949d12fb467dc80c829c79bc7334123e14d5"
+git-tree-sha1 = "5e6f66ecd23fc9d2a351e3ea26a1cbb0a59ec031"
 uuid = "1037b233-b668-4ce9-9b63-f9f681f55dd2"
-version = "0.12.2"
+version = "0.13.0"
 
     [deps.ExaModels.extensions]
     ExaModelsJuMP = "JuMP"
@@ -93,19 +93,31 @@ version = "0.12.2"
 
 [[deps.ExaModelsCompiler]]
 deps = ["ExaModels", "JuliaC", "Pkg", "Random", "Serialization", "TOML"]
-git-tree-sha1 = "06ab4d6d47cd3117f117a80c90af1fd26d6b6251"
+git-tree-sha1 = "5881cd1797b9599ca510bb527b703beacd57e9d4"
 uuid = "3d1e9a26-5b74-4f0c-9a2b-7c8f4e11d3a7"
-version = "0.1.1"
+version = "0.1.2"
 
 [[deps.ExaModelsPower]]
-deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON"]
-git-tree-sha1 = "eff988df62559fe8884fcc2831762826bb6209a0"
+deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PrecompileTools"]
+git-tree-sha1 = "d6db0e46efb217a7d96db23249368ddd2f16e0ba"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
-version = "0.4.1"
-weakdeps = ["ExaModelsCompiler"]
+version = "0.4.3"
 
     [deps.ExaModelsPower.extensions]
+    ExaModelsPowerAMDGPUExt = ["AMDGPU", "ExaModels", "KernelAbstractions"]
+    ExaModelsPowerCUDAExt = ["CUDA", "ExaModels", "KernelAbstractions"]
     ExaModelsPowerExaModelsCompilerExt = "ExaModelsCompiler"
+    ExaModelsPowerKernelAbstractionsExt = ["ExaModels", "KernelAbstractions"]
+    ExaModelsPowerMetalExt = ["Metal", "ExaModels", "KernelAbstractions"]
+    ExaModelsPoweroneAPIExt = ["oneAPI", "ExaModels", "KernelAbstractions"]
+
+    [deps.ExaModelsPower.weakdeps]
+    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    ExaModelsCompiler = "3d1e9a26-5b74-4f0c-9a2b-7c8f4e11d3a7"
+    KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+    oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [[deps.ExaPowerIO]]
 deps = ["LazyArtifacts"]

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.1
+
+- The cuda backend runs on glibc 2.28 and newer (RHEL 8 and similar): the executable's launcher was linked against the build machine's glibc 2.34.
+- Built on ExaModelsPower 0.4.3, ExaModels 0.13, ExaModelsCompiler 0.1.2, GPUCompiler 2.18, and MadNLP from madsuite-org/MadNLP.jl#668 at its current head.
+
 ## v0.7.0
 
 - The cuda backend: `empower --device=cuda` solves on an NVIDIA GPU with MadNLP and cuDSS, with the same arguments and output (`madnlp.log` in place of `ipopt.log`). Linux x86_64, with an NVIDIA driver for CUDA 12.8 or newer. It is a separate archive, `empower-cuda12-linux-x86_64.tar.gz`, compiled ahead of time with GPU kernels for compute capabilities 7.0 to 12.0, and contains no NVIDIA library: the installer downloads them as the artifacts of the Julia packages that wrap them, from the URLs and SHA-256 sums those packages publish.
