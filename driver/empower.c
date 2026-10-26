@@ -918,6 +918,44 @@ static int self_update(void) {
     return 0;
 }
 
+/* ------------------------------------------------------------------ table */
+
+/* A table with a ruled header: align[k] is 'l' or 'r'. Box-drawing characters, or ASCII
+ * on Windows, whose console may not show them. */
+static void print_table(int ncol, const char **head, const char *align, int nrow, char ***cells) {
+#ifdef _WIN32
+    const char *H = "-", *V = "|", *TL = "+", *TM = "+", *TR = "+", *ML = "+", *MM = "+", *MR = "+",
+               *BL = "+", *BM = "+", *BR = "+";
+#else
+    const char *H = "\u2500", *V = "\u2502", *TL = "\u250c", *TM = "\u252c", *TR = "\u2510",
+               *ML = "\u251c", *MM = "\u253c", *MR = "\u2524", *BL = "\u2514", *BM = "\u2534",
+               *BR = "\u2518";
+#endif
+    int w[32];
+    for (int k = 0; k < ncol; k++) {
+        w[k] = (int)strlen(head[k]);
+        for (int i = 0; i < nrow; i++)
+            if ((int)strlen(cells[i][k]) > w[k]) w[k] = (int)strlen(cells[i][k]);
+    }
+    const char *edges[3][3] = {{TL, TM, TR}, {ML, MM, MR}, {BL, BM, BR}};
+    for (int pass = 0; pass < nrow + 4; pass++) {
+        int rule = pass == 0 ? 0 : pass == 2 ? 1 : pass == nrow + 3 ? 2 : -1;
+        printf("  ");
+        if (rule >= 0) {
+            for (int k = 0; k < ncol; k++) {
+                fputs(edges[rule][k == 0 ? 0 : 1], stdout);
+                for (int c = 0; c < w[k] + 2; c++) fputs(H, stdout);
+            }
+            printf("%s\n", edges[rule][2]);
+        } else {
+            const char **row = pass == 1 ? head : (const char **)cells[pass - 3];
+            for (int k = 0; k < ncol; k++)
+                printf("%s %*s ", V, align[k] == 'l' ? -w[k] : w[k], row[k]);
+            printf("%s\n", V);
+        }
+    }
+}
+
 /* -------------------------------------------------------------------- hsl */
 
 /* empower hsl [LINK|FILE|LIB]: add HSL MA27 to this install, by running the installer for
@@ -1196,27 +1234,37 @@ int main(int argc, char **argv) {
     }
     fclose(C.summary);
 
-    /* The runs at a glance; the full table is summary.csv. */
-    int w = 4;
-    for (int i = 0; i < cases.n; i++)
-        if ((int)strlen(names[i]) > w) w = (int)strlen(names[i]);
-    printf("\nSummary (%s)\n", path);
-    printf("  Ipopt with %s. viol: largest absolute constraint violation, max(cl - c(x), c(x) - cu).\n"
-           "  solve = evals (model functions and derivatives) + solver (Ipopt and %s).\n",
-           C.linear_solver, C.linear_solver);
-    printf("  %-*s  %-14s  %14s  %9s  %5s  %8s  %8s  %8s  %8s\n", w, "case", "status", "objective",
-           "viol", "iter", "build", "solve", "evals", "solver");
+    /* The runs at a glance, as a table; the full record is summary.csv. */
+    enum { NCOL = 9 };
+    const char *head[NCOL] = {"case", "status", "objective", "max viol", "iter",
+                              "build (s)", "solve (s)", "evals (s)", "solver (s)"};
+    char ***cells = xmalloc(cases.n * sizeof *cells);
     for (int i = 0; i < cases.n; i++) {
         Result *r = &res[i];
+        char v[NCOL][64];
         if (r->n == 0) {   /* never reached the solver */
-            printf("  %-*s  %s\n", w, names[i], "not solved (see the error above)");
-            continue;
+            snprintf(v[1], 64, "not solved");
+            for (int k = 2; k < NCOL; k++) snprintf(v[k], 64, "-");
+        } else {
+            snprintf(v[1], 64, "%s", termination_status(r->status));
+            snprintf(v[2], 64, "%.8g", r->obj);
+            snprintf(v[3], 64, "%.2e", r->viol);
+            snprintf(v[4], 64, "%d", r->iters);
+            snprintf(v[5], 64, "%.3f", r->t_build);
+            snprintf(v[6], 64, "%.3f", r->t_solve);
+            snprintf(v[7], 64, "%.3f", r->t_cb);
+            snprintf(v[8], 64, "%.3f", r->t_solve - r->t_cb);
         }
-        printf("  %-*s  %-14s  %14.8g  %9.2e  %5d  %7.3fs  %7.3fs  %7.3fs  %7.3fs\n", w, names[i],
-               termination_status(r->status), r->obj, r->viol, r->iters, r->t_build, r->t_solve,
-               r->t_cb, r->t_solve - r->t_cb);
+        cells[i] = xmalloc(NCOL * sizeof(char *));
+        cells[i][0] = names[i];
+        for (int k = 1; k < NCOL; k++) cells[i][k] = strdup(v[k]);
     }
+    printf("\nSummary (%s)\n", path);
+    print_table(NCOL, head, "llrrrrrrr", cases.n, cells);
     printf("  %d solved, %d not solved, %.1f s in total\n", solved, failed, now() - t_start);
+    printf("  Ipopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals\n"
+           "  (model functions and derivatives) + solver (Ipopt and %s).\n",
+           C.linear_solver, C.linear_solver);
     if (no_hsl)
         printf("  MUMPS, without HSL: not for benchmarking; `empower hsl` adds MA27 (see the warning above)\n");
     return failed ? 1 : 0;

@@ -67,6 +67,30 @@ casename(path) = first(splitext(basename(path)))
 say(io::IO, args...) = (write(io, string(args..., "\n")); nothing)
 say(args...) = say(stdout, args...)
 
+# The summary's numbers, as C's printf writes them in the cpu backend's summary.
+fixed3(t) = isfinite(t) ? Base.Ryu.writefixed(t, 3) : "-"
+function fmt_g(x)   # %.8g
+    isfinite(x) || return string(x)
+    x == 0 && return "0"
+    e = floor(Int, log10(abs(x)))
+    -4 <= e < 8 || return Base.Ryu.writeexp(x, 7)
+    t = Base.Ryu.writefixed(x, max(7 - e, 0))
+    occursin('.', t) ? rstrip(rstrip(t, '0'), '.') : t
+end
+
+# A table with a ruled header, as the cpu backend prints it; align[k] is 'l' or 'r'.
+function print_table(head, align, rows)
+    w = [maximum(length(r[k]) for r in [[head]; rows]) for k in eachindex(head)]
+    rule(l, m, r) = say("  ", l, join(("\u2500"^(w[k] + 2) for k in eachindex(w)), m), r)
+    line(row) = say("  \u2502 ", join((align[k] == 'l' ? rpad(row[k], w[k]) : lpad(row[k], w[k])
+                                      for k in eachindex(w)), " \u2502 "), " \u2502")
+    rule("\u250c", "\u252c", "\u2510")
+    line(head)
+    rule("\u251c", "\u253c", "\u2524")
+    foreach(line, rows)
+    rule("\u2514", "\u2534", "\u2518")
+end
+
 function csv(io, v)
     s = string(v)
     occursin(r"[,\"\r\n]", s) ? print(io, '"', replace(s, "\"" => "\"\""), '"') : print(io, s)
@@ -160,21 +184,20 @@ function run(args::Vector{String})::Cint
             end
         end
     end
-    w = maximum(length(r.name) for r in results; init = 4)
-    sec(t) = string(round(t; digits = 3), "s")
-    say("\nSummary (", path, ")")
-    say("  MadNLP with cuDSS. viol: largest absolute constraint violation, max(cl - c(x), c(x) - cu).")
-    say("  solve = evals (model functions and derivatives) + solver (MadNLP and cuDSS).")
-    say("  ", rpad("case", w), "  ", rpad("status", 22), lpad("objective", 14), lpad("viol", 11),
-        lpad("iter", 6), lpad("build", 9), lpad("solve", 9), lpad("evals", 9), lpad("solver", 9))
-    for r in results
-        say("  ", rpad(r.name, w), "  ", rpad(r.st, 22), lpad(string(round(r.obj; sigdigits = 8)), 14),
-            lpad(string(round(r.viol; sigdigits = 3)), 11), lpad(r.iter, 6), lpad(sec(r.t_build), 9),
-            lpad(sec(r.t_solve), 9), lpad(sec(r.t_cb), 9), lpad(sec(r.t_solve - r.t_cb), 9))
+    head = ["case", "status", "objective", "max viol", "iter", "build (s)", "solve (s)",
+            "evals (s)", "solver (s)"]
+    rows = map(results) do r
+        r.ok || isfinite(r.t_solve) || return vcat([r.name, "not solved"], fill("-", 7))
+        [r.name, r.st, fmt_g(r.obj), Base.Ryu.writeexp(r.viol, 2), string(r.iter),
+         fixed3(r.t_build), fixed3(r.t_solve), fixed3(r.t_cb), fixed3(r.t_solve - r.t_cb)]
     end
+    say("\nSummary (", path, ")")
+    print_table(head, "llrrrrrrr", rows)
     nok = count(r -> r.ok, results)
     say("  ", nok, " solved, ", length(results) - nok, " not solved, ",
         round(time() - t_start; digits = 1), " s in total")
+    say("  MadNLP with cuDSS. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals")
+    say("  (model functions and derivatives) + solver (MadNLP and cuDSS).")
     return Cint(nok == length(results) ? 0 : 1)
 end
 
