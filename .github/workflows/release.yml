@@ -102,9 +102,33 @@ jobs:
           name: empower-windows-x86_64
           path: empower-windows-x86_64.tar.gz
 
+  # The GPU build compiles its kernels on a GPU, so it runs on our self-hosted GPU
+  # runners; it installs with the x86_64 CPU archive from build-linux.
+  build-gpu:
+    name: gpu-linux-x86_64
+    needs: build-linux
+    runs-on: [self-hosted, gpu, cuda, shin-compute]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # v3: the self-hosted runners run actions on Node 24.
+      - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: ${{ env.JULIA_VERSION }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: empower-linux-x86_64
+      - name: Build
+        run: tools/build-gpu.sh
+      - name: Test
+        run: tools/test-gpu.sh
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: empower-gpu-linux-x86_64
+          path: empower-gpu-linux-x86_64.tar.gz
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, build-gpu]
     runs-on: ubuntu-24.04
     permissions:
       contents: write        # create the release

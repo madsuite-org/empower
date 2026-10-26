@@ -6,3 +6,5 @@ empower-results/
 a.out
 a.exe
 *.pdb
+stage-gpu/
+empower-gpu-*.tar.gz

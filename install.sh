@@ -32,6 +32,12 @@ Options:
       --hsl LINK|FILE      the HSL download link from HSL's email, or the
                            downloaded package, to compile on this machine
       --hsl-lib FILE       an HSL library you already have, used as is
+      --gpu                also install the GPU build (empower --device=gpu; Linux
+                           x86_64 with an NVIDIA driver for CUDA 12.8 or newer). It
+                           downloads the NVIDIA libraries it uses (CUDA runtime,
+                           cuBLAS, cuSPARSE, cuSOLVER, cuDSS; about 1.7 GB) as the
+                           Julia packages' artifacts, from the URLs and SHA-256 sums
+                           those packages publish; empower does not distribute them
       --uninstall          remove DIR and the PATH blocks from the startup files
   -h, --help
 
@@ -39,9 +45,9 @@ HSL MA27 is required, and empower never distributes it. Request the free
 personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ ; HSL emails a
 download link, which the installer asks for if --hsl/--hsl-lib is not given.
 
-Environment: EMPOWER_DIR, EMPOWER_HSL, EMPOWER_HSL_LIB (as the options);
+Environment: EMPOWER_DIR, EMPOWER_HSL, EMPOWER_HSL_LIB, EMPOWER_GPU=1 (as the options);
 EMPOWER_VERSION (release tag, default latest); EMPOWER_ARCHIVE (a local release
-archive, for testing); EMPOWER_FC (the Fortran compiler to try first; default
+archive, for testing; EMPOWER_GPU_ARCHIVE likewise); EMPOWER_FC (the Fortran compiler to try first; default
 gfortran on PATH); EMPOWER_SKIP_HSL=1 (install without HSL, for testing only).
 EOF
 }
@@ -109,6 +115,7 @@ main() {
             --hsl=*) EMPOWER_HSL=${1#*=} ;;
             --hsl-lib) shift; EMPOWER_HSL_LIB=${1:?--hsl-lib needs a file} ;;
             --hsl-lib=*) EMPOWER_HSL_LIB=${1#*=} ;;
+            --gpu) EMPOWER_GPU=1 ;;
             --uninstall) uninstall=1 ;;
             -h | --help) usage; exit 0 ;;
             *) die "unknown option $1 (see --help)" ;;
@@ -187,6 +194,12 @@ main() {
     say "release:       $tag"
     say "install into:  $DIR"
     say "add to PATH:   $add_to_path ($DIR/bin, in the shell startup files)"
+    gpu=0
+    if [ "${EMPOWER_GPU:-}" = 1 ]; then
+        [ "$plat" = linux-x86_64 ] || die "the GPU build (--gpu) is available on Linux x86_64 only"
+        gpu=1
+        say "GPU build:     yes (and its NVIDIA libraries, about 1.7 GB)"
+    fi
     if [ $yes -eq 0 ]; then
         [ $have_tty -eq 1 ] || die "unable to ask for confirmation; run with -y to accept the defaults (--help for options)"
         case "$(ask 'proceed? [Y/n]' y)" in
@@ -434,6 +447,69 @@ main() {
             say "$(cat "$DIR/hsl/SOURCE" 2>/dev/null): $hsl (MA27 checked)" ;;
         skip) rm -rf "$work" ;;
     esac
+
+    # --- GPU build: empower-gpu, then the NVIDIA libraries it loads ----------------
+    if [ $gpu -eq 1 ]; then
+        section "[GPU] empower-gpu"
+        command -v nvidia-smi >/dev/null 2>&1 ||
+            say "warning: nvidia-smi not found; empower --device=gpu needs an NVIDIA driver"
+        ginstalled=$(cat "$DIR/gpu/RELEASE" 2>/dev/null || true)
+        if [ -x "$DIR/gpu/bin/empower-gpu" ] && [ "$ginstalled" = "$tag" ] && [ -z "${EMPOWER_GPU_ARCHIVE:-}" ]; then
+            say "$tag is installed"
+        else
+            gstage="$DIR/.staging-gpu"
+            rm -rf "$gstage"; mkdir -p "$gstage/new"
+            if [ -n "${EMPOWER_GPU_ARCHIVE:-}" ]; then
+                say "from $EMPOWER_GPU_ARCHIVE"
+                cp "$EMPOWER_GPU_ARCHIVE" "$gstage/archive.tar.gz"
+            else
+                base="https://github.com/$REPO/releases/download/$tag"
+                say "downloading $base/empower-gpu-$plat.tar.gz"
+                get "$base/empower-gpu-$plat.tar.gz" "$gstage/archive.tar.gz" || die "no empower-gpu $tag release for $plat"
+                get "$base/SHA256SUMS" "$gstage/SHA256SUMS" || die "could not download the checksums of release $tag"
+                want=$(awk -v f="empower-gpu-$plat.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$gstage/SHA256SUMS")
+                [ -n "$want" ] || die "release $tag lists no checksum for empower-gpu-$plat.tar.gz"
+                verify "$gstage/archive.tar.gz" "$want" "empower-gpu-$plat.tar.gz"
+                say "checksum verified"
+            fi
+            tar xzf "$gstage/archive.tar.gz" -C "$gstage/new" --strip-components 1 || die "could not unpack the empower-gpu archive"
+            [ -x "$gstage/new/bin/empower-gpu" ] || die "the empower-gpu archive has no bin/empower-gpu"
+            rm -rf "$DIR/gpu"
+            mv "$gstage/new" "$DIR/gpu"
+            printf '%s\n' "$tag" > "$DIR/gpu/RELEASE"
+            rm -rf "$gstage"
+        fi
+        # The NVIDIA libraries, kept across upgrades in their own depot. CUDA_Driver (a
+        # forward-compatibility driver) is not downloaded: empower-gpu uses the system
+        # driver, and its Julia package only needs the directory to exist.
+        arts="$DIR/gpu-depot/artifacts"
+        mkdir -p "$arts"
+        while IFS="$(printf '\t')" read -r name version hash url sum; do
+            [ -n "$hash" ] || continue
+            if [ "$name" = CUDA_Driver ]; then
+                mkdir -p "$arts/$hash"
+                continue
+            fi
+            if [ -f "$arts/$hash/.empower-verified" ]; then
+                say "$name $version: installed"
+                continue
+            fi
+            say "$name $version: downloading $url"
+            get "$url" "$arts/$hash.tar.gz" || die "could not download $name"
+            verify "$arts/$hash.tar.gz" "$sum" "$name $version"
+            rm -rf "$arts/$hash"; mkdir -p "$arts/$hash"
+            tar xzf "$arts/$hash.tar.gz" -C "$arts/$hash" || die "could not unpack $name"
+            rm -f "$arts/$hash.tar.gz"
+            : > "$arts/$hash/.empower-verified"
+            say "$name $version: checksum verified"
+        done < "$DIR/gpu/nvidia-artifacts.tsv"
+        # Artifacts no release of empower-gpu installed here uses any more.
+        for d in "$arts"/*; do
+            [ -d "$d" ] || continue
+            grep -q "$(basename "$d")" "$DIR/gpu/nvidia-artifacts.tsv" || rm -rf "$d"
+        done
+        say "$("$DIR/bin/empower" --version) with the GPU build"
+    fi
 
     # --- 5. PATH, the way juliaup does it ------------------------------------------
     section "[5/5] PATH"

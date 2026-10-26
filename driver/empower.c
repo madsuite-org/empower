@@ -782,10 +782,66 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     fclose(f);
 }
 
+/* -------------------------------------------------------------------- gpu */
+
+/* --device=gpu: resolve the cases here, then solve them all in one run of empower-gpu,
+ * which writes the same files. */
+static int run_gpu(List *args, const char *form, const char *out, int argc, char **argv) {
+#if defined(_WIN32) || defined(__APPLE__)
+    (void)args; (void)form; (void)out; (void)argc; (void)argv;
+    die("--device=gpu is available on Linux x86_64 only");
+#else
+    const char *exe = under_root("gpu/bin/empower-gpu");
+    if (!exe || access(exe, X_OK) != 0)
+        die("the GPU build is not installed: rerun the installer with --gpu");
+    /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
+    char depot[16400];
+    snprintf(depot, sizeof depot, "%s/gpu/share/julia:%s/gpu-depot", root, root);
+    printf("empower %s, %s form, MadNLP on the GPU\n", VERSION, form);
+    printf("  gpu      %s\n", exe);
+    printf("  output   %s\n", out);
+    for (int k = 0; k < nopts; k++) printf("  option   %s\n", opts[k]);
+    List cases = {0};
+    for (int i = 0; i < args->n; i++) {
+        if (!strcmp(args->v[i], "all")) add_all(&cases);
+        else push(&cases, args->v[i]);
+    }
+    List files = {0};
+    int failed = 0;
+    for (int i = 0; i < cases.n; i++) {
+        char cf[8192];
+        if (resolve_case(cases.v[i], cf, sizeof cf) == 0) push(&files, cf);
+        else failed++;
+    }
+    MKDIR(out);
+    write_system(out, NULL, NULL, argc, argv);
+    if (!files.n) die("no case to solve");
+    char formarg[64], outarg[8300];
+    snprintf(formarg, sizeof formarg, "--form=%s", form);
+    snprintf(outarg, sizeof outarg, "--output=%s", out);
+    char **cmd = xcalloc(4 + 2 * nopts + files.n, sizeof *cmd);
+    int n = 0;
+    cmd[n++] = (char *)exe;
+    cmd[n++] = formarg;
+    cmd[n++] = outarg;
+    for (int k = 0; k < nopts; k++) { cmd[n++] = "--option"; cmd[n++] = opts[k]; }
+    for (int i = 0; i < files.n; i++) cmd[n++] = files.v[i];
+    cmd[n] = NULL;
+    /* The bundle finds its Julia libraries and artifacts in its own depot. */
+    setenv("JULIA_DEPOT_PATH", depot, 1);
+    unsetenv("JULIA_PROJECT");
+    unsetenv("JULIA_LOAD_PATH");
+    fflush(stdout);
+    int rc = run(cmd);
+    if (rc < 0) die("could not run %s", exe);
+    return rc || failed ? 1 : 0;
+#endif
+}
+
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
-    "usage: empower <case>... [--form=polar|rect|dc] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
+    "usage: empower <case>... [--form=polar|rect|dc] [--device=cpu|gpu] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
@@ -794,7 +850,9 @@ static const char *usage =
     "               pglib_opf_case118_ieee.m), downloaded on first use; \"all\" solves\n"
     "               every PGLib-OPF v" PGLIB_VERSION " case for typical operating conditions\n"
     "  --form       formulation: polar (default) or rect (AC), or dc\n"
-    "  --solver     ipopt (default; the only solver in this release)\n"
+    "  --device     cpu (default: Ipopt with HSL MA27) or gpu (MadNLP with cuDSS on an\n"
+    "               NVIDIA GPU; Linux x86_64, installed with the installer's --gpu)\n"
+    "  --solver     ipopt on the cpu, madnlp on the gpu (the defaults, and the only ones)\n"
     "  --options    solver options separated by spaces or commas,\n"
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
@@ -829,7 +887,7 @@ int main(int argc, char **argv) {
     find_root();
     const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
                *hsllib = getenv("EMPOWER_HSL_LIB"),
-               *form = "polar", *solver = "ipopt", *out = "empower-results", *v;
+               *form = "polar", *solver = NULL, *device = "cpu", *out = "empower-results", *v;
     List args = {0};
     int check_hsl = 0;
 
@@ -844,6 +902,7 @@ int main(int argc, char **argv) {
         }
         if (!strcmp(a, "--check-hsl")) { check_hsl = 1; continue; }
         if ((v = flag(a, "--form", &i, argc, argv))) form = v;
+        else if ((v = flag(a, "--device", &i, argc, argv))) device = v;
         else if ((v = flag(a, "--solver", &i, argc, argv))) solver = v;
         else if ((v = flag(a, "--options", &i, argc, argv))) parse_options(v);
         else if ((v = flag(a, "--output", &i, argc, argv))) out = v;
@@ -860,7 +919,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(form, "rect")) C.model = "acr";
     else if (!strcmp(form, "dc")) C.model = "dcp";
     else die("--form must be polar, rect or dc, got %s", form);
-    if (strcmp(solver, "ipopt")) die("--solver must be ipopt, got %s", solver);
+    int gpu = !strcmp(device, "gpu");
+    if (!gpu && strcmp(device, "cpu")) die("--device must be cpu or gpu, got %s", device);
+    if (!solver) solver = gpu ? "madnlp" : "ipopt";
+    if (strcmp(solver, gpu ? "madnlp" : "ipopt"))
+        die("--solver must be %s with --device=%s, got %s", gpu ? "madnlp" : "ipopt", device, solver);
+    if (gpu) return run_gpu(&args, form, out, argc, argv);
     if (!modellib) modellib = under_root(MODEL_LIB);
     if (!modellib) die("no model library: pass --model-lib or set EMPOWER_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);

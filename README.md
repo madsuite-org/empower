@@ -46,7 +46,8 @@ empower <case>... [--form=polar|rect|dc] [--solver=ipopt] [--options="NAME=VALUE
 |---|---|
 | `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `~/.empower/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
 | `--form` | Formulation: `polar` (default) or `rect` for AC OPF, or `dc` for DC OPF. |
-| `--solver` | `ipopt` (default, and the only solver in this release). |
+| `--device` | `cpu` (default): Ipopt with HSL MA27. `gpu`: MadNLP with cuDSS on an NVIDIA GPU (see [GPU](#gpu)). |
+| `--solver` | `ipopt` on the CPU, `madnlp` on the GPU (the defaults, and the only solvers in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The linear solver is `ma27`; with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. |
 | `--output` | Output directory (default `./empower-results`). |
 | `--hsl-lib` | HSL library to use (default `~/.empower/hsl`, or `EMPOWER_HSL_LIB`). |
@@ -83,6 +84,16 @@ $env:EMPOWER_HSL = '<download link>'; irm https://raw.githubusercontent.com/mads
 ```
 
 `--hsl` (`EMPOWER_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`EMPOWER_HSL_LIB` on Windows) or to `empower`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
+
+## GPU
+
+`empower --device=gpu` solves on an NVIDIA GPU with [MadNLP](https://github.com/madsuite-org/MadNLP.jl) and NVIDIA cuDSS, with the same arguments and the same output (`madnlp.log` in place of `ipopt.log`); `--options` are MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. It needs Linux x86_64, an NVIDIA GPU, and an NVIDIA driver for CUDA 12.8 or newer. The archive carries GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9 and 9.0 (V100, RTX 20, 30 and 40 series, A100, L40, H100), so they run without compiling; so far it has been tested on 7.5 (RTX 2080 Ti) and 8.6 (RTX 3080). On another GPU it compiles its kernels when it starts, which makes the first solve slower. Install it with the installer's `--gpu`:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh -s -- --gpu
+```
+
+The GPU build is a separate archive, `empower-gpu-linux-x86_64.tar.gz`: the solver compiled ahead of time with its Julia runtime, with GPU kernels for each supported architecture. It does not contain the NVIDIA libraries it uses (CUDA runtime, cuBLAS, cuSPARSE, cuSOLVER, NVRTC, nvJitLink, cuDSS). The installer downloads them, about 1.7 GB, as the artifacts of the Julia packages that wrap them (`CUDA_Runtime_jll`, `CUDA_Compiler_jll`, `CUDSS_jll`), from the URLs and SHA-256 sums those packages publish, into `~/.empower/gpu-depot`, under NVIDIA's licences.
 
 ## Platforms
 
