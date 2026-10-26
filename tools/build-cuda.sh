@@ -60,6 +60,11 @@ if [ ! -x "$cc" ]; then
         -c conda-forge --override-channels gcc_linux-64 "sysroot_linux-64=2.28"
 fi
 export JULIA_CC="$cc"
+# juliac generates the executable's code on JULIA_IMAGE_THREADS threads; leave headroom for
+# others on a shared machine.
+JULIA_IMAGE_THREADS=${JULIA_IMAGE_THREADS:-$(n=$(($(nproc) / 2)); [ "$n" -gt 32 ] && n=32; [ "$n" -lt 1 ] && n=1; echo $n)}
+export JULIA_IMAGE_THREADS
+echo "juliac: $JULIA_IMAGE_THREADS threads"
 julia --startup-file=no --project=gpu/juliac -e 'using JuliaC; JuliaC.main(ARGS)' -- \
     --project="$env" --output-exe empower-cuda --bundle "$stage/empower-cuda" \
     --trim=no --experimental "$env/main.jl"
@@ -106,5 +111,10 @@ left=$(find "$stage/empower-cuda" -name 'libcuda*' -o -name 'libcublas*' -o -nam
 printf '%s\n' "$cuda" > "$stage/empower-cuda/CUDA"
 julia --startup-file=no --project="$env" compile/licenses.jl "$stage/empower-cuda/licenses"
 cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib "$stage/empower-cuda/"
-tar -C "$stage" -czf "$name.tar.gz" empower-cuda
+# pigz writes the same gzip format in parallel.
+if command -v pigz >/dev/null; then
+    tar -C "$stage" -cf - empower-cuda | pigz > "$name.tar.gz"
+else
+    tar -C "$stage" -czf "$name.tar.gz" empower-cuda
+fi
 echo "built $name.tar.gz ($(du -h "$name.tar.gz" | cut -f1))"
