@@ -30,7 +30,7 @@ empower case118_ieee
 
 A shell cannot change the `PATH` of the terminal that started it, so on Linux and macOS the installer prints the one `export` line that makes `empower` available in the current terminal as well.
 
-Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install directory), `--add-to-path no` (leave the startup files alone), `--hsl LINK` (the download link from HSL's email), `--hsl-lib FILE` (an HSL library you already have), and `--uninstall`; `--help` lists them. On Windows, set the environment variables `EMPOWER_YES=1`, `EMPOWER_DIR`, `EMPOWER_ADD_TO_PATH=no`, `EMPOWER_HSL`, `EMPOWER_HSL_LIB`, or `EMPOWER_UNINSTALL=1` before running it.
+Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install directory), `--add-to-path no` (leave the startup files alone), `--hsl LINK` (the download link from HSL's email), `--hsl-lib FILE` (an HSL library you already have), `--no-hsl` (install without HSL), `--backends LIST` (`cpu`, `cuda`, or `cpu,cuda`; see [Backends](#backends)), and `--uninstall`; `--help` lists them. On Windows, set the environment variables `EMPOWER_YES=1`, `EMPOWER_DIR`, `EMPOWER_ADD_TO_PATH=no`, `EMPOWER_HSL`, `EMPOWER_HSL_LIB`, `EMPOWER_SKIP_HSL=1`, or `EMPOWER_UNINSTALL=1` before running it.
 
 **Upgrade** by running the installer again: it installs the latest release (or `EMPOWER_VERSION=vX.Y.Z`), keeps your HSL library, and recreates the Ipopt environment only if the release pins different packages. **Uninstall** with `sh -s -- --uninstall` (or `$env:EMPOWER_UNINSTALL='1'` on Windows), which removes `~/.empower` and the PATH entries.
 
@@ -83,17 +83,27 @@ curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite
 $env:EMPOWER_HSL = '<download link>'; irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | iex
 ```
 
+To install the `cpu` backend without HSL, pass `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows) or answer `skip` at the prompt; `empower` then needs `--hsl-lib`, or another linear solver in `--options` (the conda-forge Ipopt has MUMPS: `--options=linear_solver=mumps`).
+
 `--hsl` (`EMPOWER_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`EMPOWER_HSL_LIB` on Windows) or to `empower`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
 
-## GPU
+## Backends
 
-`empower --device=gpu` solves on an NVIDIA GPU with [MadNLP](https://github.com/madsuite-org/MadNLP.jl) and NVIDIA cuDSS, with the same arguments and the same output (`madnlp.log` in place of `ipopt.log`); `--options` are MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. It needs Linux x86_64, an NVIDIA GPU, and an NVIDIA driver for CUDA 12.8 or newer. The archive carries GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9 and 9.0 (V100, RTX 20, 30 and 40 series, A100, L40, H100), so they run without compiling; so far it has been tested on 7.5 (RTX 2080 Ti) and 8.6 (RTX 3080). On another GPU it compiles its kernels when it starts, which makes the first solve slower. Install it with the installer's `--gpu`:
+The installer's `--backends` selects the solvers to install, comma-separated (default `cpu`); `empower --device` selects one at run time (default `cpu` if it is installed, else `cuda`).
+
+| Backend | Solver | Platforms |
+|---|---|---|
+| `cpu` | Ipopt with HSL MA27 | Linux x86_64 and aarch64, macOS arm64, Windows x86_64 |
+| `cuda` | MadNLP with NVIDIA cuDSS, on an NVIDIA GPU | Linux x86_64, with an NVIDIA driver for CUDA 12.8 or newer |
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh -s -- --gpu
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh -s -- --backends=cpu,cuda
+empower case118_ieee --device=cuda
 ```
 
-The GPU build is a separate archive, `empower-gpu-linux-x86_64.tar.gz`: the solver compiled ahead of time with its Julia runtime, with GPU kernels for each supported architecture. It does not contain the NVIDIA libraries it uses (CUDA runtime, cuBLAS, cuSPARSE, cuSOLVER, NVRTC, nvJitLink, cuDSS). The installer downloads them, about 1.7 GB, as the artifacts of the Julia packages that wrap them (`CUDA_Runtime_jll`, `CUDA_Compiler_jll`, `CUDSS_jll`), from the URLs and SHA-256 sums those packages publish, into `~/.empower/gpu-depot`, under NVIDIA's licences.
+`--device=cuda` takes the same arguments and writes the same output (`madnlp.log` in place of `ipopt.log`); `--options` are then MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. The `cuda` backend is a separate archive, `empower-cuda-linux-x86_64.tar.gz`: the solver compiled ahead of time with its Julia runtime, with GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9 and 9.0 (V100, RTX 20, 30 and 40 series, A100, L40, H100), so they run without compiling; so far it has been tested on 7.0 (Quadro GV100), 7.5 (RTX 2080 Ti) and 8.6 (RTX 3080). On another GPU it compiles its kernels when it starts, which makes the first solve slower.
+
+The archive does not contain the NVIDIA libraries it uses (CUDA runtime, cuBLAS, cuSPARSE, cuSOLVER, NVRTC, nvJitLink, cuDSS). The installer downloads them, about 1.7 GB, as the artifacts of the Julia packages that wrap them (`CUDA_Runtime_jll`, `CUDA_Compiler_jll`, `CUDSS_jll`), from the URLs and SHA-256 sums those packages publish, into `~/.empower/cuda-depot`, under NVIDIA's licences.
 
 ## Platforms
 

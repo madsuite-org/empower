@@ -782,23 +782,23 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     fclose(f);
 }
 
-/* -------------------------------------------------------------------- gpu */
+/* ------------------------------------------------------------------- cuda */
 
-/* --device=gpu: resolve the cases here, then solve them all in one run of empower-gpu,
+/* --device=cuda: resolve the cases here, then solve them all in one run of empower-cuda,
  * which writes the same files. */
-static int run_gpu(List *args, const char *form, const char *out, int argc, char **argv) {
+static int run_cuda(List *args, const char *form, const char *out, int argc, char **argv) {
 #if defined(_WIN32) || defined(__APPLE__)
     (void)args; (void)form; (void)out; (void)argc; (void)argv;
-    die("--device=gpu is available on Linux x86_64 only");
+    die("--device=cuda is available on Linux x86_64 only");
 #else
-    const char *exe = under_root("gpu/bin/empower-gpu");
+    const char *exe = under_root("cuda/bin/empower-cuda");
     if (!exe || access(exe, X_OK) != 0)
-        die("the GPU build is not installed: rerun the installer with --gpu");
+        die("the cuda backend is not installed: rerun the installer with --backends=cpu,cuda");
     /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
     char depot[16400];
-    snprintf(depot, sizeof depot, "%s/gpu/share/julia:%s/gpu-depot", root, root);
-    printf("empower %s, %s form, MadNLP on the GPU\n", VERSION, form);
-    printf("  gpu      %s\n", exe);
+    snprintf(depot, sizeof depot, "%s/cuda/share/julia:%s/cuda-depot", root, root);
+    printf("empower %s, %s form, MadNLP with cuDSS on the GPU\n", VERSION, form);
+    printf("  solver   %s\n", exe);
     printf("  output   %s\n", out);
     for (int k = 0; k < nopts; k++) printf("  option   %s\n", opts[k]);
     List cases = {0};
@@ -841,7 +841,7 @@ static int run_gpu(List *args, const char *form, const char *out, int argc, char
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
-    "usage: empower <case>... [--form=polar|rect|dc] [--device=cpu|gpu] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
+    "usage: empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
@@ -850,9 +850,10 @@ static const char *usage =
     "               pglib_opf_case118_ieee.m), downloaded on first use; \"all\" solves\n"
     "               every PGLib-OPF v" PGLIB_VERSION " case for typical operating conditions\n"
     "  --form       formulation: polar (default) or rect (AC), or dc\n"
-    "  --device     cpu (default: Ipopt with HSL MA27) or gpu (MadNLP with cuDSS on an\n"
-    "               NVIDIA GPU; Linux x86_64, installed with the installer's --gpu)\n"
-    "  --solver     ipopt on the cpu, madnlp on the gpu (the defaults, and the only ones)\n"
+    "  --device     cpu (Ipopt with HSL MA27) or cuda (MadNLP with cuDSS on an NVIDIA\n"
+    "               GPU; Linux x86_64); the installer's --backends selects which are\n"
+    "               installed. Default: cpu if installed, else cuda\n"
+    "  --solver     ipopt on cpu, madnlp on cuda (the defaults, and the only ones)\n"
     "  --options    solver options separated by spaces or commas,\n"
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
@@ -887,7 +888,7 @@ int main(int argc, char **argv) {
     find_root();
     const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
                *hsllib = getenv("EMPOWER_HSL_LIB"),
-               *form = "polar", *solver = NULL, *device = "cpu", *out = "empower-results", *v;
+               *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;
     List args = {0};
     int check_hsl = 0;
 
@@ -919,16 +920,24 @@ int main(int argc, char **argv) {
     else if (!strcmp(form, "rect")) C.model = "acr";
     else if (!strcmp(form, "dc")) C.model = "dcp";
     else die("--form must be polar, rect or dc, got %s", form);
-    int gpu = !strcmp(device, "gpu");
-    if (!gpu && strcmp(device, "cpu")) die("--device must be cpu or gpu, got %s", device);
-    if (!solver) solver = gpu ? "madnlp" : "ipopt";
-    if (strcmp(solver, gpu ? "madnlp" : "ipopt"))
-        die("--solver must be %s with --device=%s, got %s", gpu ? "madnlp" : "ipopt", device, solver);
-    if (gpu) return run_gpu(&args, form, out, argc, argv);
+    /* The default device: cpu when its backend (Ipopt) is installed, else cuda. */
+    if (!device) {
+        const char *cudaexe = under_root("cuda/bin/empower-cuda");
+        device = (!ipoptlib && !under_root(IPOPT_LIB) && cudaexe && access(cudaexe, X_OK) == 0) ? "cuda" : "cpu";
+    }
+    if (!strcmp(device, "amdgpu")) die("the amdgpu backend is not available in this release");
+    int cuda = !strcmp(device, "cuda");
+    if (!cuda && strcmp(device, "cpu")) die("--device must be cpu or cuda, got %s", device);
+    if (!solver) solver = cuda ? "madnlp" : "ipopt";
+    if (strcmp(solver, cuda ? "madnlp" : "ipopt"))
+        die("--solver must be %s with --device=%s, got %s", cuda ? "madnlp" : "ipopt", device, solver);
+    if (cuda) return run_cuda(&args, form, out, argc, argv);
     if (!modellib) modellib = under_root(MODEL_LIB);
     if (!modellib) die("no model library: pass --model-lib or set EMPOWER_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);
-    if (!ipoptlib) die("no Ipopt library: pass --ipopt-lib or set EMPOWER_IPOPT_LIB");
+    if (!ipoptlib)
+        die("the cpu backend (Ipopt) is not installed: rerun the installer with --backends=cpu\n"
+            "(or pass --ipopt-lib, or set EMPOWER_IPOPT_LIB)");
     if (hsllib && !*hsllib) hsllib = NULL;
     if (!hsllib) hsllib = under_root(HSL_LIB);
     if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);

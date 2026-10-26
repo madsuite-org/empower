@@ -102,10 +102,10 @@ jobs:
           name: empower-windows-x86_64
           path: empower-windows-x86_64.tar.gz
 
-  # The GPU build compiles its kernels on a GPU, so it runs on our self-hosted GPU
-  # runners; it installs with the x86_64 CPU archive from build-linux.
-  build-gpu:
-    name: gpu-linux-x86_64
+  # The cuda backend compiles its kernels on a GPU, so it is built on our self-hosted
+  # GPU runners; it installs with the x86_64 archive from build-linux.
+  build-cuda:
+    name: cuda-linux-x86_64
     needs: build-linux
     runs-on: [self-hosted, gpu, cuda, shin-compute]
     steps:
@@ -118,17 +118,17 @@ jobs:
         with:
           name: empower-linux-x86_64
       - name: Build
-        run: tools/build-gpu.sh
+        run: tools/build-cuda.sh
       - name: Test
-        run: tools/test-gpu.sh
+        run: tools/test-cuda.sh
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: empower-gpu-linux-x86_64
-          path: empower-gpu-linux-x86_64.tar.gz
+          name: empower-cuda-linux-x86_64
+          path: empower-cuda-linux-x86_64.tar.gz
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-macos, build-windows, build-gpu]
+    needs: [build-linux, build-macos, build-windows, build-cuda]
     runs-on: ubuntu-24.04
     permissions:
       contents: write        # create the release

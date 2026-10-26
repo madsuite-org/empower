@@ -1,8 +1,8 @@
-# empower-gpu: solve OPF cases on an NVIDIA GPU with ExaModelsPower and MadNLP (cuDSS).
+# empower-cuda: solve OPF cases on an NVIDIA GPU with ExaModelsPower and MadNLP (cuDSS).
 #
-# Called by the empower driver with --device=gpu, which resolves the cases to files:
+# Called by the empower driver with --device=cuda, which resolves the cases to files:
 #
-#   empower-gpu --form=polar|rect|dc --output=DIR [--option NAME=VALUE]... FILE...
+#   empower-cuda --form=polar|rect|dc --output=DIR [--option NAME=VALUE]... FILE...
 #
 # For each case it writes DIR/<case>/solution.m (the solved case, MATPOWER savecase
 # layout) and DIR/<case>/madnlp.log, and a row of DIR/summary.csv.

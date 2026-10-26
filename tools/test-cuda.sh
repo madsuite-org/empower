@@ -1,17 +1,17 @@
 #!/bin/sh
-# Install the built archives with install.sh --gpu (which downloads the NVIDIA libraries
+# Install the built archives with install.sh --backends=cpu,cuda (which downloads the NVIDIA libraries
 # from the Julia packages' release URLs), then solve cases on the GPU with each formulation.
 set -eu
 cd "$(dirname "$0")/.."
 root=$(pwd)
 t=$(mktemp -d)
 cd "$t"
-export EMPOWER_ARCHIVE="$root/empower-linux-x86_64.tar.gz" EMPOWER_GPU_ARCHIVE="$root/empower-gpu-linux-x86_64.tar.gz"
+export EMPOWER_ARCHIVE="$root/empower-linux-x86_64.tar.gz" EMPOWER_CUDA_ARCHIVE="$root/empower-cuda-linux-x86_64.tar.gz"
 export EMPOWER_SKIP_HSL=1
-sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --gpu
+sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --backends=cpu,cuda
 op="$t/empower/bin/empower"
 for f in polar rect dc; do
-    "$op" case14_ieee case118_ieee --device=gpu --form=$f --output=$f
+    "$op" case14_ieee case118_ieee --device=cuda --form=$f --output=$f
 done
 for f in polar rect dc; do
     cat "$f/summary.csv"

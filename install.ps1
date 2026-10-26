@@ -21,7 +21,9 @@
 #   EMPOWER_VERSION        release tag (default: latest)
 #   EMPOWER_ARCHIVE        local release archive to install instead of downloading one
 #   EMPOWER_FC             the Fortran compiler to try first (default gfortran on PATH)
-#   EMPOWER_SKIP_HSL=1     install without HSL (for testing only)
+#   EMPOWER_SKIP_HSL=1     install without HSL; empower then needs --hsl-lib, or another
+#                          linear solver in --options
+#   EMPOWER_BACKENDS       cpu (the default, and the only backend on Windows)
 #
 # HSL MA27 is required, and empower never distributes it. Request the free
 # personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/; HSL emails
@@ -56,6 +58,9 @@ function Say($msg) { Write-Host "    $msg" }
 function Section($msg) { Write-Host ''; Write-Host $msg -ForegroundColor Cyan }
 # `throw`, not `exit`: under `irm | iex`, exit would close the PowerShell window.
 function Fail($msg) { throw "empower install: $msg" }
+if ($env:EMPOWER_BACKENDS -and $env:EMPOWER_BACKENDS -ne 'cpu') {
+    Fail "the cuda backend is available on Linux x86_64 only; on Windows EMPOWER_BACKENDS can only be cpu"
+}
 function Get-Url($url, $out) {
     curl.exe --proto '=https' --tlsv1.2 -fsSL -o $out $url
     return $LASTEXITCODE -eq 0
@@ -200,7 +205,7 @@ $HslMode = ''; $HslSrc = ''; $UserLib = ''
 if ($env:EMPOWER_HSL_LIB) { $HslMode = 'lib'; $UserLib = [IO.Path]::GetFullPath($env:EMPOWER_HSL_LIB); Say "your library $UserLib" }
 elseif ($env:EMPOWER_HSL) { $HslMode = 'build'; $HslSrc = $env:EMPOWER_HSL }
 elseif (Test-Path $HslLib) { $HslMode = 'keep'; Say 'already installed' }
-elseif ($env:EMPOWER_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (EMPOWER_SKIP_HSL=1)' }
+elseif ($env:EMPOWER_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (EMPOWER_SKIP_HSL=1): empower then needs --hsl-lib, or another linear solver in --options' }
 else {
     Say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
     Say "  1. request it at $Ma27Url"
@@ -208,11 +213,14 @@ else {
     $link = ''
     if ($Interactive) {
         try { Start-Process $Ma27Url; Say 'opened the request page in your browser' } catch { }
-        $link = Read-Host '    paste the download link (or a path to the package or an HSL library)'
+        $link = Read-Host '    paste the download link, a path to the package or to an HSL library, or "skip"'
     }
-    if (-not $link) { Fail "no HSL download link. Rerun with `$env:EMPOWER_HSL='<download link from the email>'" }
-    if ($link -notmatch '^https?://') { $link = [IO.Path]::GetFullPath($link) }
-    if ($link -match '\.dll$') { $HslMode = 'lib'; $UserLib = $link } else { $HslMode = 'build'; $HslSrc = $link }
+    if (-not $link) { Fail "no HSL download link. Rerun with `$env:EMPOWER_HSL='<download link from the email>', `$env:EMPOWER_HSL_LIB, or `$env:EMPOWER_SKIP_HSL=1" }
+    if ($link -eq 'skip') { $HslMode = 'skip'; Say 'skipped' }
+    else {
+        if ($link -notmatch '^https?://') { $link = [IO.Path]::GetFullPath($link) }
+        if ($link -match '\.dll$') { $HslMode = 'lib'; $UserLib = $link } else { $HslMode = 'build'; $HslSrc = $link }
+    }
 }
 
 # The build works in a private temporary directory, under its short (8.3) name

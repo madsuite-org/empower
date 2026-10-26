@@ -1,4 +1,4 @@
-# The empower-gpu executable: EmpowerGPU.main, built with juliac.
+# The empower-cuda executable: EmpowerGPU.main, built with juliac.
 using EmpowerGPU, CUDACore
 
 module PrecompileStatements

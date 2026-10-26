@@ -1,15 +1,15 @@
 #!/bin/sh
-# Build empower-gpu-linux-x86_64.tar.gz:
-#   empower-gpu/bin/empower-gpu   the GPU solver (gpu/EmpowerGPU, MadNLP with cuDSS), built
+# Build empower-cuda-linux-x86_64.tar.gz, the cuda backend:
+#   empower-cuda/bin/empower-cuda the GPU solver (gpu/EmpowerGPU, MadNLP with cuDSS), built
 #                                 with juliac --bundle, with its Julia runtime
-#   empower-gpu/nvidia-artifacts.tsv
+#   empower-cuda/nvidia-artifacts.tsv
 #                                 the NVIDIA libraries it loads, which the archive does
 #                                 not contain: the installer downloads each one, as the
 #                                 Julia package (JLL) artifact the build used, from the
 #                                 URL in that package's Artifacts.toml and checks its
 #                                 SHA-256
 # Needs an NVIDIA GPU: the precompile workloads compile the kernels on it, and EmpowerGPU
-# compiles them again for the other architectures empower-gpu supports.
+# compiles them again for the other architectures empower-cuda supports.
 set -eu
 cd "$(dirname "$0")/.."
 root=$(pwd)
@@ -17,10 +17,10 @@ root=$(pwd)
 julia --startup-file=no --project=gpu -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
 
-rm -rf stage-gpu
-mkdir -p stage-gpu
+rm -rf stage-cuda
+mkdir -p stage-cuda
 julia --startup-file=no --project=compile -e 'using JuliaC; JuliaC.main(ARGS)' -- \
-    --project=gpu --output-exe empower-gpu --bundle stage-gpu/empower-gpu \
+    --project=gpu --output-exe empower-cuda --bundle stage-cuda/empower-cuda \
     --trim=no --experimental gpu/main.jl
 
 # The NVIDIA artifacts: recorded for the installer, then removed.
@@ -46,17 +46,17 @@ julia --startup-file=no --project=gpu -e '
         end
         hit || error("no artifact of $jll in the bundle")
     end
-    close(out)' stage-gpu/empower-gpu/share/julia/artifacts stage-gpu/empower-gpu/nvidia-artifacts.tsv
-cat stage-gpu/empower-gpu/nvidia-artifacts.tsv
+    close(out)' stage-cuda/empower-cuda/share/julia/artifacts stage-cuda/empower-cuda/nvidia-artifacts.tsv
+cat stage-cuda/empower-cuda/nvidia-artifacts.tsv
 
 # No NVIDIA library may remain in the archive.
-left=$(find stage-gpu/empower-gpu -name 'libcuda*' -o -name 'libcublas*' -o -name 'libcusparse*' \
+left=$(find stage-cuda/empower-cuda -name 'libcuda*' -o -name 'libcublas*' -o -name 'libcusparse*' \
     -o -name 'libcusolver*' -o -name 'libcudss*' -o -name 'libcufft*' -o -name 'libcurand*' \
     -o -name 'libcupti*' -o -name 'libnvrtc*' -o -name 'libnvJitLink*' \
     -o -name 'libnvvm*' -o -name 'ptxas' | head -5)
 [ -z "$left" ] || { echo "NVIDIA files left in the archive: $left"; exit 1; }
 
-julia --startup-file=no --project=gpu compile/licenses.jl stage-gpu/empower-gpu/licenses
-cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage-gpu/empower-gpu/
-tar -C stage-gpu -czf empower-gpu-linux-x86_64.tar.gz empower-gpu
-echo "built empower-gpu-linux-x86_64.tar.gz ($(du -h empower-gpu-linux-x86_64.tar.gz | cut -f1))"
+julia --startup-file=no --project=gpu compile/licenses.jl stage-cuda/empower-cuda/licenses
+cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage-cuda/empower-cuda/
+tar -C stage-cuda -czf empower-cuda-linux-x86_64.tar.gz empower-cuda
+echo "built empower-cuda-linux-x86_64.tar.gz ($(du -h empower-cuda-linux-x86_64.tar.gz | cut -f1))"
