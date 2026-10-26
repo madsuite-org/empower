@@ -1,62 +1,71 @@
 #!/bin/sh
-# Build empower-cuda-linux-x86_64.tar.gz, the cuda backend:
+# Build empower-cuda12-linux-x86_64.tar.gz or empower-cuda13-linux-x86_64.tar.gz, the
+# cuda backend for drivers that support CUDA 12.8 or 13.0 and newer:
 #   empower-cuda/bin/empower-cuda the GPU solver (gpu/EmpowerGPU, MadNLP with cuDSS), built
 #                                 with juliac --bundle, with its Julia runtime
 #   empower-cuda/nvidia-artifacts.tsv
 #                                 the NVIDIA libraries it loads, which the archive does
 #                                 not contain: the installer downloads each one, as the
-#                                 Julia package (JLL) artifact the build used, from the
-#                                 URL in that package's Artifacts.toml and checks its
+#                                 Julia package (JLL) artifact the build selected, from
+#                                 the URL in that package's Artifacts.toml and checks its
 #                                 SHA-256
-# Needs an NVIDIA GPU: the precompile workloads compile the kernels on it, and EmpowerGPU
-# compiles them again for the other architectures empower-cuda supports.
+#
+#   tools/build-cuda.sh 12|13
+#
+# The CUDA runtime is fixed per archive (12.8 or 13.0), in a copy of gpu/ with its own
+# LocalPreferences.toml, since a binary that is distributed has to name the libraries it
+# loads. Needs an NVIDIA GPU: the precompile workloads compile the kernels on it, and
+# EmpowerGPU compiles them again for the other architectures empower-cuda supports.
 set -eu
+cuda=${1:?usage: tools/build-cuda.sh 12|13}
+case "$cuda" in 12) runtime=12.8 ;; 13) runtime=13.0 ;; *) echo "CUDA major version must be 12 or 13" >&2; exit 2 ;; esac
 cd "$(dirname "$0")/.."
-root=$(pwd)
+name=empower-cuda$cuda-linux-x86_64
+env=build-cuda$cuda
+stage=stage-cuda$cuda
 
-julia --startup-file=no --project=gpu -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
-julia --startup-file=no --project=compile -e 'using Pkg; Pkg.instantiate()'
+rm -rf "$env" "$stage"
+mkdir -p "$env" "$stage"
+cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.jl gpu/EmpowerGPU "$env/"
+printf '[CUDA_Runtime_jll]\nversion = "%s"\n' "$runtime" > "$env/LocalPreferences.toml"
 
-rm -rf stage-cuda
-mkdir -p stage-cuda
-julia --startup-file=no --project=compile -e 'using JuliaC; JuliaC.main(ARGS)' -- \
-    --project=gpu --output-exe empower-cuda --bundle stage-cuda/empower-cuda \
-    --trim=no --experimental gpu/main.jl
+julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
+julia --startup-file=no --project=gpu/juliac -e 'using JuliaC; JuliaC.main(ARGS)' -- \
+    --project="$env" --output-exe empower-cuda --bundle "$stage/empower-cuda" \
+    --trim=no --experimental "$env/main.jl"
 
-# The NVIDIA artifacts: recorded for the installer, then removed.
-julia --startup-file=no --project=gpu -e '
+# The NVIDIA artifacts the build selected, as each package reports it: recorded for the
+# installer, then removed from the bundle if it carries them (lazy ones it may not).
+julia --startup-file=no --project="$env" -e '
     using TOML
-    arts = ARGS[1]
-    jlls = ("CUDA_Runtime_jll", "CUDA_Compiler_jll", "CUDA_Driver_jll", "CUDSS_jll")
-    manifest = TOML.parsefile("gpu/Manifest.toml")["deps"]
-    out = open(ARGS[2], "w")
-    for jll in jlls
+    arts, out = ARGS[1], open(ARGS[2], "w")
+    manifest = TOML.parsefile(joinpath(ARGS[3], "Manifest.toml"))["deps"]
+    for jll in ("CUDA_Runtime_jll", "CUDA_Compiler_jll", "CUDA_Driver_jll", "CUDSS_jll")
         e = only(manifest[jll])
-        pkg = Base.locate_package(Base.PkgId(Base.UUID(e["uuid"]), jll))
-        toml = TOML.parsefile(joinpath(dirname(dirname(pkg)), "Artifacts.toml"))
-        name = replace(jll, "_jll" => "")
-        hit = false
-        for a in toml[name]
-            h = a["git-tree-sha1"]
-            isdir(joinpath(arts, h)) || continue
-            d = only(a["download"])
-            println(out, name, "\t", e["version"], "\t", h, "\t", d["url"], "\t", d["sha256"])
-            rm(joinpath(arts, h); recursive = true)
-            hit = true
-        end
-        hit || error("no artifact of $jll in the bundle")
+        id = Base.PkgId(Base.UUID(e["uuid"]), jll)
+        mod = Base.require(id)
+        h = basename(mod.artifact_dir)
+        toml = TOML.parsefile(joinpath(dirname(dirname(Base.locate_package(id))), "Artifacts.toml"))
+        a = only(a for a in toml[replace(jll, "_jll" => "")] if a["git-tree-sha1"] == h)
+        d = only(a["download"])
+        println(out, replace(jll, "_jll" => ""), "\t", e["version"], "\t", h, "\t", d["url"], "\t", d["sha256"])
+        rm(joinpath(arts, h); recursive = true, force = true)
     end
-    close(out)' stage-cuda/empower-cuda/share/julia/artifacts stage-cuda/empower-cuda/nvidia-artifacts.tsv
-cat stage-cuda/empower-cuda/nvidia-artifacts.tsv
+    close(out)' "$stage/empower-cuda/share/julia/artifacts" "$stage/empower-cuda/nvidia-artifacts.tsv" "$env"
+cat "$stage/empower-cuda/nvidia-artifacts.tsv"
+grep -q "cuda+$runtime\|cuda+$cuda" "$stage/empower-cuda/nvidia-artifacts.tsv" ||
+    { echo "the NVIDIA artifacts are not for CUDA $runtime"; exit 1; }
 
 # No NVIDIA library may remain in the archive.
-left=$(find stage-cuda/empower-cuda -name 'libcuda*' -o -name 'libcublas*' -o -name 'libcusparse*' \
+left=$(find "$stage/empower-cuda" -name 'libcuda*' -o -name 'libcublas*' -o -name 'libcusparse*' \
     -o -name 'libcusolver*' -o -name 'libcudss*' -o -name 'libcufft*' -o -name 'libcurand*' \
     -o -name 'libcupti*' -o -name 'libnvrtc*' -o -name 'libnvJitLink*' \
     -o -name 'libnvvm*' -o -name 'ptxas' | head -5)
 [ -z "$left" ] || { echo "NVIDIA files left in the archive: $left"; exit 1; }
 
-julia --startup-file=no --project=gpu compile/licenses.jl stage-cuda/empower-cuda/licenses
-cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage-cuda/empower-cuda/
-tar -C stage-cuda -czf empower-cuda-linux-x86_64.tar.gz empower-cuda
-echo "built empower-cuda-linux-x86_64.tar.gz ($(du -h empower-cuda-linux-x86_64.tar.gz | cut -f1))"
+printf '%s\n' "$cuda" > "$stage/empower-cuda/CUDA"
+julia --startup-file=no --project="$env" compile/licenses.jl "$stage/empower-cuda/licenses"
+cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib "$stage/empower-cuda/"
+tar -C "$stage" -czf "$name.tar.gz" empower-cuda
+echo "built $name.tar.gz ($(du -h "$name.tar.gz" | cut -f1))"

@@ -8,3 +8,5 @@ a.exe
 *.pdb
 stage-gpu/
 empower-gpu-*.tar.gz
+build-cuda*/
+stage-cuda*/

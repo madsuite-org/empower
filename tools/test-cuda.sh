@@ -1,12 +1,13 @@
 #!/bin/sh
-# Install the built archives with install.sh --backends=cpu,cuda (which downloads the NVIDIA libraries
+# Install the built archives with install.sh --backends=cpu,cuda (EMPOWER_CUDA=12|13) (which downloads the NVIDIA libraries
 # from the Julia packages' release URLs), then solve cases on the GPU with each formulation.
 set -eu
+cuda=${1:?usage: tools/test-cuda.sh 12|13}
 cd "$(dirname "$0")/.."
 root=$(pwd)
 t=$(mktemp -d)
 cd "$t"
-export EMPOWER_ARCHIVE="$root/empower-linux-x86_64.tar.gz" EMPOWER_CUDA_ARCHIVE="$root/empower-cuda-linux-x86_64.tar.gz"
+export EMPOWER_ARCHIVE="$root/empower-linux-x86_64.tar.gz" EMPOWER_CUDA_ARCHIVE="$root/empower-cuda$cuda-linux-x86_64.tar.gz" EMPOWER_CUDA=$cuda
 export EMPOWER_SKIP_HSL=1
 sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --backends=cpu,cuda
 op="$t/empower/bin/empower"

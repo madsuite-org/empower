@@ -475,10 +475,21 @@ main() {
     # --- cuda backend: empower-cuda, then the NVIDIA libraries it loads -------------
     if [ $cuda -eq 1 ]; then
         sec "cuda: empower-cuda and its NVIDIA libraries"
-        command -v nvidia-smi >/dev/null 2>&1 ||
-            say "warning: nvidia-smi not found; empower --device=cuda needs an NVIDIA driver"
+        # The archive for the newest CUDA the driver supports: CUDA 13 (13.0 and newer)
+        # or CUDA 12 (12.8 and newer). EMPOWER_CUDA=12|13 chooses instead.
+        cmaj=${EMPOWER_CUDA:-}
+        if [ -z "$cmaj" ]; then
+            v=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -1)
+            [ -n "$v" ] || die "could not read the CUDA version of your NVIDIA driver (nvidia-smi); install the driver, or set EMPOWER_CUDA=12 or 13"
+            vmaj=${v%%.*}; vmin=${v#*.}; vmin=${vmin%%.*}
+            if [ "$vmaj" -ge 13 ]; then cmaj=13
+            elif [ "$vmaj" -eq 12 ] && [ "$vmin" -ge 8 ]; then cmaj=12
+            else die "your NVIDIA driver supports CUDA $v; the cuda backend needs CUDA 12.8 or newer, so update the driver"; fi
+            say "NVIDIA driver supports CUDA $v: installing the CUDA $cmaj build"
+        fi
+        case "$cmaj" in 12 | 13) ;; *) die "EMPOWER_CUDA must be 12 or 13" ;; esac
         ginstalled=$(cat "$DIR/cuda/RELEASE" 2>/dev/null || true)
-        if [ -x "$DIR/cuda/bin/empower-cuda" ] && [ "$ginstalled" = "$tag" ] && [ -z "${EMPOWER_CUDA_ARCHIVE:-}" ]; then
+        if [ -x "$DIR/cuda/bin/empower-cuda" ] && [ "$ginstalled" = "$tag cuda$cmaj" ] && [ -z "${EMPOWER_CUDA_ARCHIVE:-}" ]; then
             say "$tag is installed"
         else
             gstage="$DIR/.staging-cuda"
@@ -488,19 +499,19 @@ main() {
                 cp "$EMPOWER_CUDA_ARCHIVE" "$gstage/archive.tar.gz"
             else
                 base="https://github.com/$REPO/releases/download/$tag"
-                say "downloading $base/empower-cuda-$plat.tar.gz"
-                get "$base/empower-cuda-$plat.tar.gz" "$gstage/archive.tar.gz" || die "no empower-cuda $tag release for $plat"
+                say "downloading $base/empower-cuda$cmaj-$plat.tar.gz"
+                get "$base/empower-cuda$cmaj-$plat.tar.gz" "$gstage/archive.tar.gz" || die "no empower-cuda$cmaj $tag release for $plat"
                 get "$base/SHA256SUMS" "$gstage/SHA256SUMS" || die "could not download the checksums of release $tag"
-                want=$(awk -v f="empower-cuda-$plat.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$gstage/SHA256SUMS")
-                [ -n "$want" ] || die "release $tag lists no checksum for empower-cuda-$plat.tar.gz"
-                verify "$gstage/archive.tar.gz" "$want" "empower-cuda-$plat.tar.gz"
+                want=$(awk -v f="empower-cuda$cmaj-$plat.tar.gz" '$2 == f || $2 == "*" f {print $1}' "$gstage/SHA256SUMS")
+                [ -n "$want" ] || die "release $tag lists no checksum for empower-cuda$cmaj-$plat.tar.gz"
+                verify "$gstage/archive.tar.gz" "$want" "empower-cuda$cmaj-$plat.tar.gz"
                 say "checksum verified"
             fi
             tar xzf "$gstage/archive.tar.gz" -C "$gstage/new" --strip-components 1 || die "could not unpack the empower-cuda archive"
             [ -x "$gstage/new/bin/empower-cuda" ] || die "the empower-cuda archive has no bin/empower-cuda"
             rm -rf "$DIR/cuda"
             mv "$gstage/new" "$DIR/cuda"
-            printf '%s\n' "$tag" > "$DIR/cuda/RELEASE"
+            printf '%s\n' "$tag cuda$cmaj" > "$DIR/cuda/RELEASE"
             rm -rf "$gstage"
         fi
         # The NVIDIA libraries, kept across upgrades in their own depot. CUDA_Driver (a
@@ -532,7 +543,7 @@ main() {
             [ -d "$d" ] || continue
             grep -q "$(basename "$d")" "$DIR/cuda/nvidia-artifacts.tsv" || rm -rf "$d"
         done
-        say "$("$DIR/bin/empower" --version) with the cuda backend"
+        say "$("$DIR/bin/empower" --version) with the cuda backend (CUDA $cmaj)"
     fi
 
     # --- 5. PATH, the way juliaup does it ------------------------------------------
