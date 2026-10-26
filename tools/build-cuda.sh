@@ -40,7 +40,7 @@ julia --startup-file=no --project=gpu/juliac -e 'using JuliaC; JuliaC.main(ARGS)
     --trim=no --experimental "$env/main.jl"
 
 # The NVIDIA artifacts the build selected, as each package reports it: recorded for the
-# installer, then removed from the bundle if it carries them (lazy ones it may not).
+# installer; every artifact of those packages is then removed from the bundle.
 julia --startup-file=no --project="$env" -e '
     using TOML
     arts, out = ARGS[1], open(ARGS[2], "w")
@@ -54,7 +54,11 @@ julia --startup-file=no --project="$env" -e '
         a = only(a for a in toml[replace(jll, "_jll" => "")] if a["git-tree-sha1"] == h)
         d = only(a["download"])
         println(out, replace(jll, "_jll" => ""), "\t", e["version"], "\t", h, "\t", d["url"], "\t", d["sha256"])
-        rm(joinpath(arts, h); recursive = true, force = true)
+        # Every artifact of the package: the bundler selects in its own process, which
+        # may pick another CUDA version (from a global preference) than the build did.
+        for b in toml[replace(jll, "_jll" => "")]
+            rm(joinpath(arts, b["git-tree-sha1"]); recursive = true, force = true)
+        end
     end
     close(out)' "$stage/empower-cuda/share/julia/artifacts" "$stage/empower-cuda/nvidia-artifacts.tsv" "$env"
 cat "$stage/empower-cuda/nvidia-artifacts.tsv"
