@@ -10,9 +10,12 @@ module PrecompileStatements
         isdefined(@__MODULE__, name) || Core.eval(@__MODULE__, :(const $name = $m))
     end
     for line in eachline(joinpath(@__DIR__, "precompile_statements.jl"))
+        # A statement naming something the current dependencies no longer define (an
+        # ExaModels closure renumbered by an update, say) does nothing; say so in the build log.
         try
             Core.eval(@__MODULE__, Meta.parse(line))
-        catch
+        catch err
+            println(stderr, "stale precompile statement (", sprint(showerror, err; context = :limit => true)[1:min(end, 100)], "): ", line[1:min(end, 160)])
         end
     end
 end

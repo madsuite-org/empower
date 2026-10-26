@@ -28,4 +28,11 @@ awk -F, 'FNR > 1 {
     ref = ($1 ~ /case14_/) ? (dc ? 2051.5 : 2178.1) : (dc ? 93101 : 97214)
     if (($5 - ref) / ref > 1e-4 || ($5 - ref) / ref < -1e-4) { print "objective mismatch: " $0; bad = 1 }
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
+# The executable compiles nothing at run time: a stale gpu/precompile_statements.jl or a
+# workload that misses a code path shows up here as compiled methods.
+EMPOWER_TRACE_COMPILE=1 "$op" case14_ieee case300_ieee --device=cuda --form=polar --output=trace > trace.log 2>&1
+n=$(grep -c "precompile(" trace.log || true)
+if [ "$n" -ne 0 ]; then
+    echo "compiled $n methods at run time:"; grep "precompile(" trace.log | cut -c1-300; exit 1
+fi
 echo "all checks passed"
