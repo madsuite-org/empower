@@ -146,15 +146,9 @@ function main(args::Vector{String})::Cint
     return Cint(0)
 end
 
-# The GPU architectures the executable carries kernels for, besides the one the package
-# images were compiled on: V100 (CUDA 12 only), RTX 20/30/40/50 series, A100, L40, H100
-# and B200. Compiled while this package precompiles, into its image.
-include("multiarch.jl")
-# Inside a compile workload, so the new CodeInstances (and the cubins attached to them)
-# are recorded as newly inferred and saved in this package's image.
-using PrecompileTools: @compile_workload
-@compile_workload begin
-    compile_for([v"7.0", v"7.5", v"8.0", v"8.6", v"8.9", v"9.0", v"10.0", v"12.0"])
-end
+# The GPU kernels compiled for the other architectures empower-cuda supports (V100, RTX
+# 20 to 50 series, A100, L40, H100, B200), one package per architecture: loading them
+# brings their images, and so the cubins, into the executable.
+import EmpowerKernels70, EmpowerKernels75, EmpowerKernels80, EmpowerKernels86, EmpowerKernels89, EmpowerKernels90, EmpowerKernels100, EmpowerKernels120
 
 end # module EmpowerGPU

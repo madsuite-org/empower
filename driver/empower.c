@@ -829,6 +829,9 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     cmd[n] = NULL;
     /* The bundle finds its Julia libraries and artifacts in its own depot. */
     setenv("JULIA_DEPOT_PATH", depot, 1);
+    /* As for the cpu model library: ExaModelsPower's __init__ otherwise creates a data
+     * directory next to its source as it was on the build machine. */
+    if (!getenv("EXA_MODELS_DEPOT")) setenv("EXA_MODELS_DEPOT", case_dir(), 1);
     unsetenv("JULIA_PROJECT");
     unsetenv("JULIA_LOAD_PATH");
     fflush(stdout);

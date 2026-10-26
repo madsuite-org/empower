@@ -1,0 +1,15 @@
+name = "EmpowerKernels80"
+uuid = "46fc5ab2-a21f-5e9b-995d-7676194b6287"
+version = "0.1.0"
+
+[deps]
+CUDACore = "bd0ed864-bdfe-4181-a5ed-ce625a5fdea2"
+CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
+ExaModelsPower = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
+GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
+MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
+MadNLPGPU = "d72a61cc-809d-412f-99be-fd81f4b8a598"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+cuBLAS = "182d3088-87b7-4494-8cad-fc6afaa545bc"
+cuSOLVER = "887afef0-6a32-4de5-add4-7827692ba8fc"
+cuSPARSE = "b26da814-b3bc-49ef-b0ee-c816305aa060"

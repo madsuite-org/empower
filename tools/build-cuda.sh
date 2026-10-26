@@ -31,7 +31,7 @@ export JULIA_CPU_TARGET
 
 rm -rf "$env" "$stage"
 mkdir -p "$env" "$stage"
-cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.jl gpu/EmpowerGPU "$env/"
+cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.jl gpu/EmpowerGPU gpu/kernels "$env/"
 # Julia applies a project's preferences only to the packages it lists, so the runtime and
 # compiler packages join as extras; each reads its own preference namespace first, so
 # both are set (the compiler's otherwise follows a global preference, if one exists).
