@@ -178,6 +178,15 @@ end
             end
         end
         rm(out; recursive = true)
+        # case14 is too small for the multi-block sort of the sparsity patterns that every
+        # larger case uses; a model with 5000 variables sorts with it.
+        EM = ExaModelsPower.ExaModels
+        n = 5000
+        c = EM.ExaCore(; backend = CUDABackend())
+        c, x = EM.add_var(c, n)
+        c, _ = EM.add_obj(c, x[i]^2 + x[i] for i in 1:n)
+        c, _ = EM.add_con(c, x[i] * x[i+1] for i in 1:n-1)
+        EM.ExaModel(c)
     end
 end
 
