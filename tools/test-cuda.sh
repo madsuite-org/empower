@@ -30,7 +30,11 @@ awk -F, 'FNR > 1 {
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
 # The executable compiles nothing at run time: a stale gpu/precompile_statements.jl or a
 # workload that misses a code path shows up here as compiled methods.
+# Once with the output in a file and once on a terminal (script's pseudo-terminal), since
+# printing specializes on the stream.
 EMPOWER_TRACE_COMPILE=1 "$op" case14_ieee case300_ieee --device=cuda --form=polar --output=trace > trace.log 2>&1
+script -q -e -c "EMPOWER_TRACE_COMPILE=1 '$op' case14_ieee case300_ieee --device=cuda --form=polar --output=trace" trace-tty.log > /dev/null
+cat trace-tty.log >> trace.log
 n=$(grep -c "precompile(" trace.log || true)
 if [ "$n" -ne 0 ]; then
     echo "compiled $n methods at run time:"; grep "precompile(" trace.log | cut -c1-300; exit 1
