@@ -841,10 +841,45 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
 #endif
 }
 
+/* --------------------------------------------------------------------- up */
+
+/* empower up: run the installer again, into this install directory, for the backends
+ * installed here, keeping the HSL library and leaving the shell startup files alone. */
+static int self_update(void) {
+    if (!*root) die("cannot find the empower install directory");
+    int cpu = under_root(IPOPT_LIB) != NULL;
+    int cuda = under_root("cuda/bin/empower-cuda") != NULL;
+    int hsl = under_root(HSL_LIB) != NULL;
+    if (!cpu && !cuda) cpu = 1;
+    const char *backends = cpu && cuda ? "cpu,cuda" : cuda ? "cuda" : "cpu";
+    printf("updating empower %s in %s (backends: %s)\n", VERSION, root, backends);
+    fflush(stdout);
+#ifdef _WIN32
+    _putenv_s("EMPOWER_DIR", root);
+    _putenv_s("EMPOWER_YES", "1");
+    _putenv_s("EMPOWER_ADD_TO_PATH", "no");
+    if (cpu && !hsl) _putenv_s("EMPOWER_SKIP_HSL", "1");
+    char *cmd[] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                   "irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | iex", NULL};
+#else
+    if (strchr(root, '\'')) die("cannot update an install directory whose path has a single quote");
+    char script[16400];
+    snprintf(script, sizeof script,
+             "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh"
+             " | sh -s -- -y --path '%s' --add-to-path=no --backends=%s%s",
+             root, backends, cpu && !hsl ? " --no-hsl" : "");
+    char *cmd[] = {"sh", "-c", script, NULL};
+#endif
+    int rc = run(cmd);
+    if (rc != 0) die("the update failed");
+    return 0;
+}
+
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
-    "usage: empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
+    "usage: empower up           update empower to the latest release (same backends)\n"
+    "       empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
@@ -889,6 +924,7 @@ static const char *flag(const char *a, const char *name, int *i, int argc, char 
 int main(int argc, char **argv) {
     t_start = now();
     find_root();
+    if (argc == 2 && (!strcmp(argv[1], "up") || !strcmp(argv[1], "update"))) return self_update();
     const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
                *hsllib = getenv("EMPOWER_HSL_LIB"),
                *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;

@@ -2,6 +2,7 @@
 
 ## v0.7.1
 
+- `empower up` (or `empower update`) updates empower to the latest release: it runs the installer again into the same directory, for the backends installed there, keeping the HSL library and leaving the shell startup files alone.
 - The cuda backend runs on glibc 2.28 and newer (RHEL 8 and similar): the executable's launcher was linked against the build machine's glibc 2.34.
 - Built on ExaModelsPower 0.4.3, ExaModels 0.13, ExaModelsCompiler 0.1.2, GPUCompiler 2.18, and MadNLP from madsuite-org/MadNLP.jl#668 at its current head.
 

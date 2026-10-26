@@ -59,6 +59,8 @@ empower case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options=
 
 `empower` prints each step with its elapsed time (downloading, parsing the case and building the model, solving, writing the output), Ipopt's own output for each solve (`--options=print_level=N` sets how much), and a summary table at the end.
 
+To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
+
 ## Output
 
 | File | Contents |
