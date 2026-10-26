@@ -128,7 +128,7 @@ jobs:
         # One depot for every runner on the machine, kept between runs: each runner's own
         # depot starts cold, and a cold depot precompiles everything (about 10 minutes).
         env:
-          JULIA_DEPOT_PATH: /home/action-runner/depots/empower-cuda${{ matrix.cuda }}:
+          JULIA_DEPOT_PATH: "/home/action-runner/depots/empower-cuda${{ matrix.cuda }}:"
         run: tools/build-cuda.sh ${{ matrix.cuda }}
       - name: Test
         run: tools/test-cuda.sh ${{ matrix.cuda }}
