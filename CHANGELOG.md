@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.7.0
+
+- The cuda backend: `empower --device=cuda` solves on an NVIDIA GPU with MadNLP and cuDSS, with the same arguments and output (`madnlp.log` in place of `ipopt.log`). Linux x86_64, with an NVIDIA driver for CUDA 12.8 or newer. It is a separate archive, `empower-cuda12-linux-x86_64.tar.gz`, compiled ahead of time with GPU kernels for compute capabilities 7.0 to 12.0, and contains no NVIDIA library: the installer downloads them as the artifacts of the Julia packages that wrap them, from the URLs and SHA-256 sums those packages publish.
+- `install.sh --backends=cpu,cuda` selects the solvers to install (default `cpu`); a cuda-only install needs no Ipopt or HSL. `empower --device=cpu|cuda` selects one at run time, defaulting to cpu when it is installed.
+- `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows), or `skip` at the prompt, installs the cpu backend without HSL; the prompt also takes an HSL library you already have.
+
 ## v0.6.0
 
 - Renamed from opfsolve to empower: the command, the repository (madsuite-org/empower), the install directory (`~/.empower`), and the environment variables (`EMPOWER_*`).
