@@ -27,10 +27,11 @@ stage=stage-cuda$cuda
 rm -rf "$env" "$stage"
 mkdir -p "$env" "$stage"
 cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.jl gpu/EmpowerGPU "$env/"
-# Julia applies a project's preferences only to the packages it lists, so the runtime
-# package joins as an extra.
-printf '\n[extras]\nCUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"\n' >> "$env/Project.toml"
-printf '[CUDA_Runtime_jll]\nversion = "%s"\n' "$runtime" > "$env/LocalPreferences.toml"
+# Julia applies a project's preferences only to the packages it lists, so the runtime and
+# compiler packages join as extras; each reads its own preference namespace first, so
+# both are set (the compiler's otherwise follows a global preference, if one exists).
+printf '\n[extras]\nCUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"\nCUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"\n' >> "$env/Project.toml"
+printf '[CUDA_Compiler_jll]\nversion = "%s"\n\n[CUDA_Runtime_jll]\nversion = "%s"\n' "$runtime" "$runtime" > "$env/LocalPreferences.toml"
 
 julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
