@@ -44,9 +44,31 @@ printf '[CUDA_Compiler_jll]\nversion = "%s"\n\n[CUDA_Runtime_jll]\nversion = "%s
 
 julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
+
+# juliac compiles the executable's launcher with a C compiler, which ties it to the build
+# machine's glibc (__libc_start_main@GLIBC_2.34 on newer systems). conda-forge's gcc with
+# a glibc 2.28 sysroot links it for 2.28 and newer, as the cpu archives are built.
+toolchain="$(pwd)/build-toolchain"
+cc="$toolchain/env/bin/x86_64-conda-linux-gnu-gcc"
+if [ ! -x "$cc" ]; then
+    mkdir -p "$toolchain"
+    curl --proto '=https' --tlsv1.2 -fsSL -o "$toolchain/micromamba" \
+        https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64
+    echo "366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3  $toolchain/micromamba" | sha256sum -c -
+    chmod +x "$toolchain/micromamba"
+    MAMBA_ROOT_PREFIX="$toolchain/root" "$toolchain/micromamba" create -y -q -p "$toolchain/env" \
+        -c conda-forge --override-channels gcc_linux-64 "sysroot_linux-64=2.28"
+fi
+export JULIA_CC="$cc"
 julia --startup-file=no --project=gpu/juliac -e 'using JuliaC; JuliaC.main(ARGS)' -- \
     --project="$env" --output-exe empower-cuda --bundle "$stage/empower-cuda" \
     --trim=no --experimental "$env/main.jl"
+
+# The launcher must run on glibc 2.28.
+newest=$("$toolchain/env/bin/x86_64-conda-linux-gnu-objdump" -T "$stage/empower-cuda/bin/empower-cuda" |
+    grep -o 'GLIBC_[0-9.]*' | sort -t. -k2,2n -k3,3n | tail -1)
+case "$newest" in GLIBC_2.[0-9] | GLIBC_2.[0-9].* | GLIBC_2.1[0-9]* | GLIBC_2.2[0-8] | GLIBC_2.2[0-8].*) echo "launcher needs $newest" ;;
+    *) echo "the launcher needs $newest, newer than glibc 2.28"; exit 1 ;; esac
 
 # The NVIDIA artifacts the build selected, as each package reports it: recorded for the
 # installer; every artifact of those packages is then removed from the bundle.

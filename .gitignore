@@ -10,3 +10,4 @@ stage-gpu/
 empower-gpu-*.tar.gz
 build-cuda*/
 stage-cuda*/
+build-toolchain/
