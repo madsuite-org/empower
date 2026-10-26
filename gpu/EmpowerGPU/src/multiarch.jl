@@ -62,12 +62,26 @@ function compile_for(caps)
     ks = filter(k -> k[2].params.sm == built, all)
     println("build architecture ", built, ": ", length(ks), " of ", length(all), " cached kernels")
     n = 0
-    for cap in caps, (mi, cfg, ci) in ks
-        cfg2 = retarget(cfg, cap)
-        cfg2 == cfg && continue
-        res = CUDACore.compile_or_lookup(GPUCompiler.CompilerJob(mi, cfg2, ci.min_world))
-        res.image === nothing || (n += 1)
+    done = VersionNumber[]
+    for cap in caps
+        # A CUDA's ptxas drops old architectures (CUDA 13 has no Volta, sm_70); the PTX
+        # ISA still lists them, so the first kernel is the test.
+        supported = true
+        for (k, (mi, cfg, ci)) in enumerate(ks)
+            cfg2 = retarget(cfg, cap)
+            cfg2 == cfg && continue
+            res = try
+                CUDACore.compile_or_lookup(GPUCompiler.CompilerJob(mi, cfg2, ci.min_world))
+            catch err
+                k == 1 && occursin("is not defined for option 'gpu-name'", sprint(showerror, err)) || rethrow()
+                println("skipping compute capability ", cap, ": this CUDA's ptxas does not support it")
+                supported = false
+                break
+            end
+            res.image === nothing || (n += 1)
+        end
+        supported && push!(done, cap)
     end
-    println("compiled ", length(ks), " kernels for ", join(caps, ", "), ": ", n, " images")
+    println("compiled ", length(ks), " kernels for ", join(done, ", "), ": ", n, " images")
     return n
 end

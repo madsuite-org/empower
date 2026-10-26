@@ -485,7 +485,14 @@ main() {
             if [ "$vmaj" -ge 13 ]; then cmaj=13
             elif [ "$vmaj" -eq 12 ] && [ "$vmin" -ge 8 ]; then cmaj=12
             else die "your NVIDIA driver supports CUDA $v; the cuda backend needs CUDA 12.8 or newer, so update the driver"; fi
-            say "NVIDIA driver supports CUDA $v: installing the CUDA $cmaj build"
+            # CUDA 13 dropped Volta (compute capability 7.0): such a GPU takes the CUDA 12 build.
+            cc=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | sort -t. -k1,1n -k2,2n | head -1)
+            if [ "$cmaj" = 13 ] && [ -n "$cc" ] && [ "${cc%%.*}" -lt 7 -o "$cc" = 7.0 -o "$cc" = 7.2 ]; then
+                cmaj=12
+                say "NVIDIA driver supports CUDA $v, GPU compute capability $cc: installing the CUDA 12 build (CUDA 13 has no Volta)"
+            else
+                say "NVIDIA driver supports CUDA $v: installing the CUDA $cmaj build"
+            fi
         fi
         case "$cmaj" in 12 | 13) ;; *) die "EMPOWER_CUDA must be 12 or 13" ;; esac
         ginstalled=$(cat "$DIR/cuda/RELEASE" 2>/dev/null || true)
