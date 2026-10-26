@@ -475,15 +475,21 @@ main() {
     # --- cuda backend: empower-cuda, then the NVIDIA libraries it loads -------------
     if [ $cuda -eq 1 ]; then
         sec "cuda: empower-cuda and its NVIDIA libraries"
-        # The archive for the newest CUDA the driver supports: CUDA 13 (13.0 and newer)
-        # or CUDA 12 (12.8 and newer). EMPOWER_CUDA=12|13 chooses instead.
+        # The archive for the newest CUDA the driver supports, among those the release
+        # has: CUDA 13 (13.0 and newer, not Volta) or CUDA 12 (12.8 and newer; a CUDA 13
+        # driver runs it too). EMPOWER_CUDA=12|13 chooses instead.
         cmaj=${EMPOWER_CUDA:-}
         if [ -z "$cmaj" ]; then
             v=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -1)
             [ -n "$v" ] || die "could not read the CUDA version of your NVIDIA driver (nvidia-smi); install the driver, or set EMPOWER_CUDA=12 or 13"
             vmaj=${v%%.*}; vmin=${v#*.}; vmin=${vmin%%.*}
-            if [ "$vmaj" -ge 13 ]; then cmaj=13
-            elif [ "$vmaj" -eq 12 ] && [ "$vmin" -ge 8 ]; then cmaj=12
+            have13=0
+            if [ -z "${EMPOWER_CUDA_ARCHIVE:-}" ]; then
+                curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/$REPO/releases/download/$tag/SHA256SUMS" 2>/dev/null |
+                    grep -q "empower-cuda13-$plat.tar.gz" && have13=1
+            fi
+            if [ "$vmaj" -ge 13 ] && [ $have13 -eq 1 ]; then cmaj=13
+            elif [ "$vmaj" -ge 13 ] || { [ "$vmaj" -eq 12 ] && [ "$vmin" -ge 8 ]; }; then cmaj=12
             else die "your NVIDIA driver supports CUDA $v; the cuda backend needs CUDA 12.8 or newer, so update the driver"; fi
             # CUDA 13 dropped Volta (compute capability 7.0): such a GPU takes the CUDA 12 build.
             cc=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | sort -t. -k1,1n -k2,2n | head -1)

@@ -109,7 +109,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cuda: [12, 13]
+        # CUDA 13 too once a runner has a GPU it supports (compute capability 7.5 or
+        # newer); these runners' GV100s are Volta, which CUDA 13 dropped.
+        cuda: [12]
     needs: build-linux
     runs-on: [self-hosted, gpu, cuda, shin-compute]
     steps:
