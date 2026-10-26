@@ -20,9 +20,13 @@ $op = Join-Path $env:EMPOWER_DIR 'bin\empower.exe'
 & $op case14_ieee case118_ieee --form=dc --options=linear_solver=mumps --output=dc
 
 $bad = 0
-# Without HSL and without an explicit linear solver, empower must refuse and say how to get MA27.
+# Without HSL and without an explicit linear solver, empower uses MUMPS and says how to get MA27.
 $nohsl = & $op case14_ieee --output=nohsl 2>&1 | Out-String
-if ($LASTEXITCODE -eq 0 -or $nohsl -notmatch 'hsl\.rl\.ac\.uk/download/MA27') { Write-Host 'empower ran without MA27'; $bad = 1 }
+if ($LASTEXITCODE -ne 0 -or $nohsl -notmatch 'hsl\.rl\.ac\.uk/download/MA27' -or $nohsl -notmatch 'empower hsl') { Write-Host 'no MUMPS run with the HSL warning'; $bad = 1 }
+if (-not (Select-String -Quiet -Pattern 'linear solver mumps' -Path 'nohsl\pglib_opf_case14_ieee\ipopt.log')) { Write-Host 'the run without HSL did not use MUMPS'; $bad = 1 }
+# The whole PGLib-OPF library: three sets of cases.
+$dl = & $op download | Out-String
+if ($LASTEXITCODE -ne 0 -or ([regex]::Matches($dl, ' cases, ')).Count -ne 3) { Write-Host "empower download failed: $dl"; $bad = 1 }
 # AC references from the PGLib-OPF README; DC from PowerModels' DCPPowerModel.
 $refs = @{
     'ac' = @{ 'pglib_opf_case14_ieee' = 2178.1; 'pglib_opf_case118_ieee' = 97214 }
@@ -36,6 +40,7 @@ foreach ($f in 'polar', 'rect', 'dc') {
         if ($row.termination_status -ne 'LOCALLY_SOLVED') { Write-Host "not solved: $($row.case) $f"; $bad = 1 }
         $r = $ref[$row.case]
         if ([math]::Abs(([double]$row.objective - $r) / $r) -gt 1e-4) { Write-Host "objective mismatch: $($row.case) $f $($row.objective)"; $bad = 1 }
+        if ([double]$row.constraint_violation -gt 1e-5) { Write-Host "constraint violation: $($row.case) $f $($row.constraint_violation)"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'linear solver mumps' -Path "$f\$($row.case)\ipopt.log")) { Write-Host "not mumps: $($row.case) $f"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'status = LOCALLY_SOLVED' -Path "$f\$($row.case)\solution.m")) { Write-Host "no solved case file: $($row.case) $f"; $bad = 1 }
     }
@@ -43,5 +48,4 @@ foreach ($f in 'polar', 'rect', 'dc') {
 }
 if ($bad) { exit 1 }
 Write-Host 'all checks passed'
-# The deliberate no-MA27 run left a nonzero $LASTEXITCODE, which the CI wrapper would report.
 exit 0

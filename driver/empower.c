@@ -118,10 +118,54 @@ static const char *lib_error(void) { return dlerror(); }
 
 static double t_start;
 
+/* Styles on a terminal (unless NO_COLOR is set); plain text otherwise. The rule is
+ * ASCII on Windows, whose console may not show box-drawing characters. */
+static const char *BOLD = "", *DIM = "", *RST = "", *GREEN = "", *RED = "", *YELLOW = "";
+#ifdef _WIN32
+#define RULE "-"
+#define DOT "-"
+#else
+#define RULE "\u2500"
+#define DOT "\u00b7"
+#endif
+static void init_style(void) {
+#ifndef _WIN32
+    if (!isatty(1) || getenv("NO_COLOR")) return;
+    BOLD = "\033[1m"; DIM = "\033[2m"; RST = "\033[0m";
+    GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m";
+#endif
+}
+
+/* "── [1/3] case ─────": a heading across 78 columns. */
+static void heading(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void heading(const char *fmt, ...) {
+    char t[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(t, sizeof t, fmt, ap);
+    va_end(ap);
+    printf("\n%s" RULE RULE " %s ", BOLD, t);
+    for (int k = (int)strlen(t) + 4; k < 78; k++) fputs(RULE, stdout);
+    printf("%s\n", RST);
+}
+
+/* "  label    value" */
+static void kv(const char *label, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void kv(const char *label, const char *fmt, ...) {
+    va_list ap;
+    printf("  %-9s", label);
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+}
+
+static const char *status_color(int ok) { return ok ? GREEN : RED; }
+
 static void step(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void step(const char *fmt, ...) {
     va_list ap;
-    printf("  %8.3fs  ", now() - t_start);
+    printf("  %s%8.3fs%s  ", DIM, now() - t_start, RST);
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
@@ -688,8 +732,9 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         if (v > r->viol) r->viol = v;
     }
     r->t_cb = M.tfev + M.tgev + M.tconsev + M.tjev + M.thev;
-    step("%s: objective %.10g, %d iterations, %.3f s (%.3f s in model callbacks)",
-         termination_status(r->status), r->obj, r->iters, r->t_solve, r->t_cb);
+    step("%s%s%s%s: objective %.10g, %d iterations, %.3f s (%.3f s in model evaluations)", BOLD,
+         status_color(r->status == 0 || r->status == 1), termination_status(r->status), RST, r->obj,
+         r->iters, r->t_solve, r->t_cb);
 
     snprintf(path, sizeof path, "%s/solution.m", out);
     if (M.write_matpower(M.id, path, x, y, zl, zu, r->obj, termination_status(r->status)) != 0)
@@ -840,10 +885,10 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
     char depot[16400];
     snprintf(depot, sizeof depot, "%s/cuda/share/julia:%s/cuda-depot", root, root);
-    printf("empower %s, %s form, MadNLP with cuDSS on the GPU\n", VERSION, form);
-    printf("  solver   %s\n", exe);
-    printf("  output   %s\n", out);
-    for (int k = 0; k < nopts; k++) printf("  option   %s\n", opts[k]);
+    printf("%sempower %s%s  " DOT "  %s form  " DOT "  MadNLP with cuDSS on the GPU\n", BOLD, VERSION, RST, form);
+    kv("solver", "%s", exe);
+    kv("output", "%s", out);
+    for (int k = 0; k < nopts; k++) kv("option", "%s", opts[k]);
     List cases = {0};
     for (int i = 0; i < args->n; i++) {
         if (!strcmp(args->v[i], "all")) add_all(&cases);
@@ -875,6 +920,10 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     /* As for the cpu model library: ExaModelsPower's __init__ otherwise creates a data
      * directory next to its source as it was on the build machine. */
     if (!getenv("EXA_MODELS_DEPOT")) setenv("EXA_MODELS_DEPOT", case_dir(), 1);
+    /* empower-cuda's timestamps continue this run's. */
+    char el[64];
+    snprintf(el, sizeof el, "%.6f", now() - t_start);
+    setenv("EMPOWER_ELAPSED", el, 1);
     unsetenv("JULIA_PROJECT");
     unsetenv("JULIA_LOAD_PATH");
     fflush(stdout);
@@ -1056,6 +1105,7 @@ static const char *flag(const char *a, const char *name, int *i, int argc, char 
 
 int main(int argc, char **argv) {
     t_start = now();
+    init_style();
     find_root();
     if (argc == 2 && (!strcmp(argv[1], "up") || !strcmp(argv[1], "update"))) return self_update();
     if ((argc == 2 || argc == 3) && !strcmp(argv[1], "hsl")) return add_hsl(argc == 3 ? argv[2] : NULL);
@@ -1118,14 +1168,14 @@ int main(int argc, char **argv) {
     C.hsllib = hsllib;
 
     char src[512];
-    printf("empower %s, %s form, Ipopt\n", VERSION, form);
-    printf("  model    %s\n", modellib);
-    printf("  ipopt    %s\n", ipoptlib);
-    if (read_source("ipopt", src, sizeof src)) printf("           %s\n", src);
-    printf("  hsl      %s\n", hsllib ? hsllib : "(none)");
-    if (hsllib && read_source("hsl", src, sizeof src)) printf("           %s\n", src);
-    printf("  output   %s\n", out);
-    for (int k = 0; k < nopts; k++) printf("  option   %s\n", opts[k]);
+    printf("%sempower %s%s  " DOT "  %s form  " DOT "  Ipopt\n", BOLD, VERSION, RST, form);
+    kv("model", "%s", modellib);
+    kv("ipopt", "%s", ipoptlib);
+    if (read_source("ipopt", src, sizeof src)) kv("", "%s", src);
+    kv("hsl", "%s", hsllib ? hsllib : "(none)");
+    if (hsllib && read_source("hsl", src, sizeof src)) kv("", "%s", src);
+    kv("output", "%s", out);
+    for (int k = 0; k < nopts; k++) kv("option", "%s", opts[k]);
 
     List cases = {0};
     for (int i = 0; i < args.n; i++) {
@@ -1200,7 +1250,7 @@ int main(int argc, char **argv) {
         if (probe_ma27(&C.I, C.hsllib)) C.linear_solver = "ma27";
         else if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
         else {
-            fprintf(stderr, "%s", NO_HSL_WARNING);
+            fprintf(stderr, "\n%s%swarning:%s %s\n", BOLD, YELLOW, RST, NO_HSL_WARNING + 9);
             C.linear_solver = "mumps";
             no_hsl = 1;
         }
@@ -1224,7 +1274,7 @@ int main(int argc, char **argv) {
     char **names = xcalloc(cases.n, sizeof *names);
     for (int i = 0; i < cases.n; i++) {
         char cf[8192], nm[1024];
-        printf("\n[%d/%d] %s\n", i + 1, cases.n, cases.v[i]);
+        heading("[%d/%d] %s", i + 1, cases.n, cases.v[i]);
         fflush(stdout);
         int st = resolve_case(cases.v[i], cf, sizeof cf);
         case_name(st == 0 ? cf : cases.v[i], nm, sizeof nm);
@@ -1259,13 +1309,16 @@ int main(int argc, char **argv) {
         cells[i][0] = names[i];
         for (int k = 1; k < NCOL; k++) cells[i][k] = strdup(v[k]);
     }
-    printf("\nSummary (%s)\n", path);
+    heading("Summary");
+    kv("written", "%s", path);
     print_table(NCOL, head, "llrrrrrrr", cases.n, cells);
-    printf("  %d solved, %d not solved, %.1f s in total\n", solved, failed, now() - t_start);
-    printf("  Ipopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals\n"
-           "  (model functions and derivatives) + solver (Ipopt and %s).\n",
-           C.linear_solver, C.linear_solver);
+    printf("  %s%d solved%s, %s%d not solved%s, %.1f s in total\n", solved ? GREEN : "", solved, RST,
+           failed ? RED : "", failed, RST, now() - t_start);
+    printf("  %sIpopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals\n"
+           "  (model functions and derivatives) + solver (Ipopt and %s).%s\n",
+           DIM, C.linear_solver, C.linear_solver, RST);
     if (no_hsl)
-        printf("  MUMPS, without HSL: not for benchmarking; `empower hsl` adds MA27 (see the warning above)\n");
+        printf("  %sMUMPS, without HSL: not for benchmarking; `empower hsl` adds MA27 (see the warning above)%s\n",
+               YELLOW, RST);
     return failed ? 1 : 0;
 }

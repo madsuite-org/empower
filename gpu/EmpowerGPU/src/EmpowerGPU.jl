@@ -67,6 +67,20 @@ casename(path) = first(splitext(basename(path)))
 say(io::IO, args...) = (write(io, string(args..., "\n")); nothing)
 say(args...) = say(stdout, args...)
 
+# Styles on a terminal (unless NO_COLOR is set), as the empower driver prints them.
+const STYLE = Dict{Symbol,String}()
+function init_style()
+    on = stdout isa Base.TTY && !haskey(ENV, "NO_COLOR")
+    for (k, v) in (:bold => "\e[1m", :dim => "\e[2m", :rst => "\e[0m", :green => "\e[32m", :red => "\e[31m")
+        STYLE[k] = on ? v : ""
+    end
+end
+sty(k) = get(STYLE, k, "")
+const T_START = Ref(0.0)
+step(args...) = say("  ", sty(:dim), lpad(Base.Ryu.writefixed(time() - T_START[], 3), 8), "s", sty(:rst), "  ", args...)
+kv(label, args...) = say("  ", rpad(label, 9), args...)
+heading(t) = say("\n", sty(:bold), "\u2500\u2500 ", t, " ", "\u2500"^max(78 - length(t) - 4, 0), sty(:rst))
+
 # The summary's numbers, as C's printf writes them in the cpu backend's summary.
 fixed3(t) = isfinite(t) ? Base.Ryu.writefixed(t, 3) : "-"
 function fmt_g(x)   # %.8g
@@ -102,19 +116,22 @@ function solve_case(file, form, out, opts, summary)
     t0 = time()
     model, vars, cons = opf_model(file; form = FORMS[form], backend = CUDABackend())
     t_build = time() - t0
-    say("model: ", model.meta.nvar, " variables, ", model.meta.ncon, " constraints (",
+    step("model: ", model.meta.nvar, " variables, ", model.meta.ncon, " constraints (",
             round(t_build; digits = 3), " s)")
     log = joinpath(dir, "madnlp.log")
     t0 = time()
     r = madnlp(model; output_file = log, opts...)
     t_solve = time() - t0
     st = termination_status(r.status)
-    say(st, ": objective ", r.objective, ", ", r.iter, " iterations, ", round(t_solve; digits = 3), " s")
+    ok = r.status in (MadNLP.SOLVE_SUCCEEDED, MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL)
+    step(sty(:bold), sty(ok ? :green : :red), st, sty(:rst), ": objective ", fmt_g(r.objective), ", ",
+         r.iter, " iterations, ", fixed3(t_solve), " s (",
+         fixed3(r.counters.eval_function_time), " s in model evaluations)")
     sol = joinpath(dir, "solution.m")
     write_matpower_solution(sol, file, vars, cons, Array(r.solution), Array(r.multipliers),
                             Array(r.multipliers_L), Array(r.multipliers_U);
                             form = FORMS[form], objective = r.objective, status = st)
-    say("wrote ", dir, "/{solution.m, madnlp.log}")
+    step("wrote ", dir, "/{solution.m, madnlp.log}")
     t_cb = r.counters.eval_function_time
     # The largest absolute constraint violation, max(cl - c(x), c(x) - cu, 0), unscaled.
     c, cl, cu = Array(r.constraints), Array(model.meta.lcon), Array(model.meta.ucon)
@@ -142,7 +159,11 @@ end
 
 # The app: solve each case and write the results; the exit code.
 function run(args::Vector{String})::Cint
-    t_start = time()
+    init_style()
+    # Warnings and errors only: the packages' @info messages ("Loading matpower file") are
+    # noise between empower's own lines.
+    Base.CoreLogging.global_logger(Base.CoreLogging.SimpleLogger(stderr, Base.CoreLogging.Warn))
+    T_START[] = time() - something(tryparse(Float64, get(ENV, "EMPOWER_ELAPSED", "")), 0.0)
     # EMPOWER_TRACE_COMPILE=1: print every method compiled at run time (as
     # `precompile(...)` statements with their compile time) to stderr, to find what the
     # executable still compiles on first use.
@@ -165,7 +186,7 @@ function run(args::Vector{String})::Cint
     end
     haskey(FORMS, form) || (say(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
     t_gpu = @elapsed (dev = CUDACore.device(); CUDACore.synchronize())
-    say("GPU: ", CUDACore.name(dev), " (context ", round(t_gpu; digits = 3), " s)")
+    kv("gpu", CUDACore.name(dev), " (context ", fixed3(t_gpu), " s)")
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
@@ -173,7 +194,8 @@ function run(args::Vector{String})::Cint
         println(summary, "case,form,termination_status,raw_status,objective,iterations,nvar,ncon,",
                 "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,constraint_violation")
         for (k, f) in enumerate(files)
-            say("\n[", k, "/", length(files), "] ", f)
+            heading(string("[", k, "/", length(files), "] ", casename(f)))
+            step("case ", f)
             try
                 push!(results, solve_case(f, form, out, opts, summary))
             catch err
@@ -191,13 +213,15 @@ function run(args::Vector{String})::Cint
         [r.name, r.st, fmt_g(r.obj), Base.Ryu.writeexp(r.viol, 2), string(r.iter),
          fixed3(r.t_build), fixed3(r.t_solve), fixed3(r.t_cb), fixed3(r.t_solve - r.t_cb)]
     end
-    say("\nSummary (", path, ")")
+    heading("Summary")
+    kv("written", path)
     print_table(head, "llrrrrrrr", rows)
     nok = count(r -> r.ok, results)
-    say("  ", nok, " solved, ", length(results) - nok, " not solved, ",
-        round(time() - t_start; digits = 1), " s in total")
-    say("  MadNLP with cuDSS. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals")
-    say("  (model functions and derivatives) + solver (MadNLP and cuDSS).")
+    nbad = length(results) - nok
+    say("  ", nok > 0 ? sty(:green) : "", nok, " solved", sty(:rst), ", ", nbad > 0 ? sty(:red) : "", nbad,
+        " not solved", sty(:rst), ", ", Base.Ryu.writefixed(time() - T_START[], 1), " s in total")
+    say("  ", sty(:dim), "MadNLP with cuDSS. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals")
+    say("  (model functions and derivatives) + solver (MadNLP and cuDSS).", sty(:rst))
     return Cint(nok == length(results) ? 0 : 1)
 end
 
