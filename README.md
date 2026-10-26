@@ -2,7 +2,7 @@
 
 Solve AC and DC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time, and Ipopt. No Julia installation is needed. (empower was called opfsolve before v0.6.0.)
 
-empower uses the HSL MA27 linear solver, which you download yourself under HSL's free personal licence: first request it at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/. HSL emails a download link, valid for 7 days, which the installer asks for (see [HSL MA27](#hsl-ma27)).
+empower uses the HSL MA27 linear solver, which you download yourself under HSL's free personal licence: first request it at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ (about 2 minutes). HSL emails a download link, valid for 7 days, which the installer asks for; press Enter to skip it for now and add it later with `empower hsl` (see [HSL MA27](#hsl-ma27)).
 
 Linux and macOS (Apple silicon):
 
@@ -44,7 +44,7 @@ empower <case>... [--form=polar|rect|dc] [--solver=ipopt] [--options="NAME=VALUE
 
 | Argument | Meaning |
 |---|---|
-| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `~/.empower/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. |
+| `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `~/.empower/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. `empower download` downloads the whole library (typical, `api` and `sad` cases) at once. |
 | `--form` | Formulation: `polar` (default) or `rect` for AC OPF, or `dc` for DC OPF. |
 | `--device` | `cpu` (default): Ipopt with HSL MA27. `gpu`: MadNLP with cuDSS on an NVIDIA GPU (see [GPU](#gpu)). |
 | `--solver` | `ipopt` on the CPU, `madnlp` on the GPU (the defaults, and the only solvers in this release). |
@@ -65,7 +65,7 @@ To update to the latest release, run `empower up` (or `empower update`). It runs
 
 | File | Contents |
 |---|---|
-| `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, and the time to parse and build the model and to solve (split into model callbacks and Ipopt). |
+| `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
 | `<case>/solution.m` | The solved case, in the layout MATPOWER's `savecase` writes for an OPF result: the input case with `VM`, `VA`, `PG`, `QG`, `VG` updated and the result columns appended, `PF`, `QF`, `PT`, `QT` and the multipliers `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN` (bus), `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN` (gen) and `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX` (branch), in MATPOWER's units. The objective and termination status are in a comment at the top. For `dc`, as in MATPOWER's DC OPF, `VM` is 1 and the reactive columns are 0. Written by ExaModelsPower's `write_matpower_solution`, compiled into the model library. |
 | `<case>/ipopt.log` | Full Ipopt output. |
 | `system.txt` | The date, OS, CPU, empower version, the Ipopt and HSL libraries used (and where they came from), and the command. |
@@ -85,7 +85,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite
 $env:EMPOWER_HSL = '<download link>'; irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | iex
 ```
 
-To install the `cpu` backend without HSL, pass `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows) or answer `skip` at the prompt; `empower` then needs `--hsl-lib`, or another linear solver in `--options` (the conda-forge Ipopt has MUMPS: `--options=linear_solver=mumps`).
+To install the `cpu` backend without HSL, press Enter at the prompt, or pass `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows). Ipopt then uses MUMPS, which is not the most efficient linear solver for OPF and whose timings are not appropriate for benchmarking solver performance; `empower` warns about it on each run. Add MA27 at any time with `empower hsl '<download link>'` (or a downloaded package, or an HSL library), which runs the installer for the installed release and downloads nothing else.
 
 `--hsl` (`EMPOWER_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`EMPOWER_HSL_LIB` on Windows) or to `empower`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
 
@@ -122,7 +122,7 @@ No system packages are needed: conda-forge supplies Ipopt's Fortran runtime and 
 - `emp/lib/libemp.so` (`emp/lib/libemp.dylib` on macOS, `emp/bin/libemp.dll` on Windows) holds the ExaModelsPower recipes `acp` (polar), `acr` (rectangular) and `dcp` (DC), with ExaModelsPower's MATPOWER writer, compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/empower` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
 
-`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with each formulation. The `Release` workflow builds and tests every platform on each push. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` refuses to run without MA27; the HSL build is tested by hand.
+`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with each formulation. The `Release` workflow builds and tests every platform on each push. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` falls back to MUMPS with its warning without HSL; the HSL build is tested by hand.
 
 ## License
 

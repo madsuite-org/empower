@@ -21,8 +21,8 @@
 #   EMPOWER_VERSION        release tag (default: latest)
 #   EMPOWER_ARCHIVE        local release archive to install instead of downloading one
 #   EMPOWER_FC             the Fortran compiler to try first (default gfortran on PATH)
-#   EMPOWER_SKIP_HSL=1     install without HSL; empower then needs --hsl-lib, or another
-#                          linear solver in --options
+#   EMPOWER_SKIP_HSL=1     install without HSL (as Enter at the prompt); Ipopt then uses
+#                          MUMPS until `empower hsl` adds MA27
 #   EMPOWER_BACKENDS       cpu (the default, and the only backend on Windows)
 #
 # HSL MA27 is required, and empower never distributes it. Request the free
@@ -200,23 +200,31 @@ Say "$(& $Exe --version) and its compiled model library"
 # Compile the user's own HSL package, optimized for this machine. HSL's personal
 # licence permits modifying the software only to optimise its performance for
 # the licensee's use on a particular platform; the result stays on this machine.
+# The cpu backend without HSL; the same words as empower's own warning.
+function Write-NoHslWarning {
+    Write-Host ''
+    Write-Host 'warning: without HSL MA27, Ipopt uses MUMPS. MUMPS is not the most efficient' -ForegroundColor Red
+    Say 'linear solver for OPF, and its timings are not appropriate for benchmarking solver'
+    Say "performance. Requesting HSL's free MA27 licence takes about 2 minutes:"
+    Say "  $Ma27Url"
+    Say "then add it with: empower hsl '<download link from HSL''s email>'"
+}
 Section '[2/5] HSL MA27 package'
 $HslMode = ''; $HslSrc = ''; $UserLib = ''
 if ($env:EMPOWER_HSL_LIB) { $HslMode = 'lib'; $UserLib = [IO.Path]::GetFullPath($env:EMPOWER_HSL_LIB); Say "your library $UserLib" }
 elseif ($env:EMPOWER_HSL) { $HslMode = 'build'; $HslSrc = $env:EMPOWER_HSL }
 elseif (Test-Path $HslLib) { $HslMode = 'keep'; Say 'already installed' }
-elseif ($env:EMPOWER_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (EMPOWER_SKIP_HSL=1): empower then needs --hsl-lib, or another linear solver in --options' }
+elseif ($env:EMPOWER_SKIP_HSL -eq '1') { $HslMode = 'skip'; Say 'skipped (EMPOWER_SKIP_HSL=1)'; Write-NoHslWarning }
 else {
     Say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
-    Say "  1. request it at $Ma27Url"
+    Say "  1. request it at $Ma27Url (about 2 minutes)"
     Say '  2. HSL emails you a download link (valid for 7 days)'
     $link = ''
     if ($Interactive) {
         try { Start-Process $Ma27Url; Say 'opened the request page in your browser' } catch { }
-        $link = Read-Host '    paste the download link, a path to the package or to an HSL library, or "skip"'
+        $link = Read-Host '    paste the download link, a path to the package or to an HSL library, or press Enter to skip'
     }
-    if (-not $link) { Fail "no HSL download link. Rerun with `$env:EMPOWER_HSL='<download link from the email>', `$env:EMPOWER_HSL_LIB, or `$env:EMPOWER_SKIP_HSL=1" }
-    if ($link -eq 'skip') { $HslMode = 'skip'; Say 'skipped' }
+    if (-not $link -or $link -eq 'skip') { $HslMode = 'skip'; Say 'skipped'; Write-NoHslWarning }
     else {
         if ($link -notmatch '^https?://') { $link = [IO.Path]::GetFullPath($link) }
         if ($link -match '\.dll$') { $HslMode = 'lib'; $UserLib = $link } else { $HslMode = 'build'; $HslSrc = $link }

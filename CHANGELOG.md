@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.0
+
+- Without HSL, the cpu backend runs Ipopt with MUMPS instead of refusing to run, and warns, on install and on each run, that MUMPS is not the most efficient linear solver for OPF and not appropriate for benchmarking solver performance. Pressing Enter at the installer's HSL prompt skips HSL, as does a `-y` install with no HSL link.
+- `empower hsl [LINK|FILE|LIB]` adds HSL MA27 to an existing install: the download link from HSL's email, the downloaded package, or an HSL library. It runs the installer for the installed release, which downloads nothing else.
+- `empower download` downloads the whole PGLib-OPF v23.07 library: the typical operating conditions, `api` and `sad` cases.
+- The summary at the end of a run, and `summary.csv`, give the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu), and split the solve time into model evaluations and the solver; the summary names the linear solver.
+- The cuda backend compiles nothing on a terminal either: printing to a terminal compiled 9 methods (about 0.13 s) on each run.
+
 ## v0.7.1
 
 - `empower up` (or `empower update`) updates empower to the latest release: it runs the installer again into the same directory, for the backends installed there, keeping the HSL library and leaving the shell startup files alone.

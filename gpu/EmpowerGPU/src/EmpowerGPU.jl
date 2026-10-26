@@ -61,6 +61,12 @@ end
 
 casename(path) = first(splitext(basename(path)))
 
+# Output goes out as one string per line: print(io, ...) compiles per stream type (a file,
+# a pipe, a terminal), and the executable must not compile on a terminal it was not built
+# on; string(...) does not depend on the stream, and write(::IO, ::String) is one method.
+say(io::IO, args...) = (write(io, string(args..., "\n")); nothing)
+say(args...) = say(stdout, args...)
+
 function csv(io, v)
     s = string(v)
     occursin(r"[,\"\r\n]", s) ? print(io, '"', replace(s, "\"" => "\"\""), '"') : print(io, s)
@@ -72,26 +78,32 @@ function solve_case(file, form, out, opts, summary)
     t0 = time()
     model, vars, cons = opf_model(file; form = FORMS[form], backend = CUDABackend())
     t_build = time() - t0
-    println("model: ", model.meta.nvar, " variables, ", model.meta.ncon, " constraints (",
+    say("model: ", model.meta.nvar, " variables, ", model.meta.ncon, " constraints (",
             round(t_build; digits = 3), " s)")
     log = joinpath(dir, "madnlp.log")
     t0 = time()
     r = madnlp(model; output_file = log, opts...)
     t_solve = time() - t0
     st = termination_status(r.status)
-    println(st, ": objective ", r.objective, ", ", r.iter, " iterations, ", round(t_solve; digits = 3), " s")
+    say(st, ": objective ", r.objective, ", ", r.iter, " iterations, ", round(t_solve; digits = 3), " s")
     sol = joinpath(dir, "solution.m")
     write_matpower_solution(sol, file, vars, cons, Array(r.solution), Array(r.multipliers),
                             Array(r.multipliers_L), Array(r.multipliers_U);
                             form = FORMS[form], objective = r.objective, status = st)
-    println("wrote ", dir, "/{solution.m, madnlp.log}")
+    say("wrote ", dir, "/{solution.m, madnlp.log}")
     t_cb = r.counters.eval_function_time
+    # The largest absolute constraint violation, max(cl - c(x), c(x) - cu, 0), unscaled.
+    c, cl, cu = Array(r.constraints), Array(model.meta.lcon), Array(model.meta.ucon)
+    viol = 0.0
+    for i in eachindex(c)
+        viol = max(viol, cl[i] - c[i], c[i] - cu[i])
+    end
     csv(summary, name)
     println(summary, ",", form, ",", st, ",", r.status, ",", r.objective, ",", r.iter, ",",
             model.meta.nvar, ",", model.meta.ncon, ",", t_build, ",", t_solve, ",", t_cb, ",",
-            t_solve - t_cb)
+            t_solve - t_cb, ",", viol)
     flush(summary)
-    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve,
+    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve, t_cb, viol,
             ok = r.status in (MadNLP.SOLVE_SUCCEEDED, MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL))
 end
 
@@ -127,38 +139,42 @@ function run(args::Vector{String})::Cint
         end
         i += 1
     end
-    haskey(FORMS, form) || (println(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
+    haskey(FORMS, form) || (say(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
     t_gpu = @elapsed (dev = CUDACore.device(); CUDACore.synchronize())
-    println("GPU: ", CUDACore.name(dev), " (context ", round(t_gpu; digits = 3), " s)")
+    say("GPU: ", CUDACore.name(dev), " (context ", round(t_gpu; digits = 3), " s)")
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
     open(path, "w") do summary
         println(summary, "case,form,termination_status,raw_status,objective,iterations,nvar,ncon,",
-                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver")
+                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,constraint_violation")
         for (k, f) in enumerate(files)
-            println("\n[", k, "/", length(files), "] ", f)
+            say("\n[", k, "/", length(files), "] ", f)
             try
                 push!(results, solve_case(f, form, out, opts, summary))
             catch err
-                println(stderr, "error: ", f, ": ", sprint(showerror, err))
+                say(stderr, "error: ", f, ": ", sprint(showerror, err))
                 push!(results, (; name = casename(f), st = "not solved (see the error above)",
-                                obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, ok = false))
+                                obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, t_cb = NaN,
+                                viol = NaN, ok = false))
             end
         end
     end
     w = maximum(length(r.name) for r in results; init = 4)
-    println("\nSummary (", path, ")")
-    println("  ", rpad("case", w), "  ", rpad("status", 22), lpad("objective", 14), lpad("iter", 6),
-            lpad("build", 9), lpad("solve", 9))
+    sec(t) = string(round(t; digits = 3), "s")
+    say("\nSummary (", path, ")")
+    say("  MadNLP with cuDSS. viol: largest absolute constraint violation, max(cl - c(x), c(x) - cu).")
+    say("  solve = evals (model functions and derivatives) + solver (MadNLP and cuDSS).")
+    say("  ", rpad("case", w), "  ", rpad("status", 22), lpad("objective", 14), lpad("viol", 11),
+        lpad("iter", 6), lpad("build", 9), lpad("solve", 9), lpad("evals", 9), lpad("solver", 9))
     for r in results
-        println("  ", rpad(r.name, w), "  ", rpad(r.st, 22), lpad(string(round(r.obj; sigdigits = 8)), 14),
-                lpad(r.iter, 6), lpad(string(round(r.t_build; digits = 3), "s"), 9),
-                lpad(string(round(r.t_solve; digits = 3), "s"), 9))
+        say("  ", rpad(r.name, w), "  ", rpad(r.st, 22), lpad(string(round(r.obj; sigdigits = 8)), 14),
+            lpad(string(round(r.viol; sigdigits = 3)), 11), lpad(r.iter, 6), lpad(sec(r.t_build), 9),
+            lpad(sec(r.t_solve), 9), lpad(sec(r.t_cb), 9), lpad(sec(r.t_solve - r.t_cb), 9))
     end
     nok = count(r -> r.ok, results)
-    println("  ", nok, " solved, ", length(results) - nok, " not solved, ",
-            round(time() - t_start; digits = 1), " s in total")
+    say("  ", nok, " solved, ", length(results) - nok, " not solved, ",
+        round(time() - t_start; digits = 1), " s in total")
     return Cint(nok == length(results) ? 0 : 1)
 end
 

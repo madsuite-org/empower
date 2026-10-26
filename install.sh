@@ -41,15 +41,17 @@ Options:
       --hsl LINK|FILE      the HSL download link from HSL's email, or the
                            downloaded package, to compile on this machine
       --hsl-lib FILE       an HSL library you already have, used as is
-      --no-hsl             install the cpu backend without HSL; empower then needs
-                           --hsl-lib, or another linear solver in --options
+      --no-hsl             install the cpu backend without HSL; Ipopt then uses
+                           MUMPS (slower for OPF; not for benchmarking) until
+                           `empower hsl` adds MA27
       --uninstall          remove DIR and the PATH blocks from the startup files
   -h, --help
 
 The cpu backend uses HSL MA27, which empower never distributes. Request the free
-personal licence at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ ; HSL emails a
-download link, which the installer asks for unless --hsl, --hsl-lib or --no-hsl is
-given.
+personal licence (about 2 minutes) at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ ;
+HSL emails a download link, which the installer asks for unless --hsl, --hsl-lib or
+--no-hsl is given. Press Enter at that prompt to skip HSL for now: Ipopt then uses
+MUMPS, and `empower hsl '<download link>'` adds MA27 later.
 
 Environment: EMPOWER_DIR, EMPOWER_BACKENDS, EMPOWER_HSL, EMPOWER_HSL_LIB,
 EMPOWER_SKIP_HSL=1 (as the options);
@@ -64,6 +66,14 @@ if [ -t 1 ]; then B=$(printf '\033[1m'); R=$(printf '\033[0m'); E=$(printf '\033
 say() { printf '    %s\n' "$*"; }
 section() { printf '\n%s%s%s\n' "$B" "$*" "$R"; }
 die() { printf '\n%serror:%s %s\n' "$E" "$R" "$*" >&2; exit 1; }
+# The cpu backend without HSL; the same words as empower's own warning.
+no_hsl_warning() {
+    printf '\n%swarning:%s without HSL MA27, Ipopt uses MUMPS. MUMPS is not the most efficient\n' "$E" "$R"
+    say "linear solver for OPF, and its timings are not appropriate for benchmarking solver"
+    say "performance. Requesting HSL's free MA27 licence takes about 2 minutes:"
+    say "  $MA27_URL"
+    say "then add it with: empower hsl '<download link from HSL's email>'"
+}
 
 # get URL FILE ("-" for stdout): https only, a progress bar only on a terminal.
 get() {
@@ -326,10 +336,10 @@ main() {
         elif [ -e "$hsl" ]; then
             hsl_mode=keep; say "already installed"
         elif [ "${EMPOWER_SKIP_HSL:-}" = 1 ]; then
-            hsl_mode=skip; say "skipped (--no-hsl): empower then needs --hsl-lib, or another linear solver in --options"
+            hsl_mode=skip; say "skipped (--no-hsl)"; no_hsl_warning
         else
             say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
-            say "  1. request it at $MA27_URL"
+            say "  1. request it at $MA27_URL (about 2 minutes)"
             say "  2. HSL emails you a download link (valid for 7 days)"
             link=""
             if [ $have_tty -eq 1 ]; then
@@ -340,11 +350,10 @@ main() {
                 elif { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } && command -v xdg-open >/dev/null; then
                     xdg-open "$MA27_URL" >/dev/null 2>&1 && say "opened the request page in your browser"
                 fi
-                link=$(ask 'paste the download link, a path to the package or to an HSL library, or "skip":' "")
+                link=$(ask 'paste the download link, a path to the package or to an HSL library, or press Enter to skip:' "")
             fi
-            [ -n "$link" ] || die "no HSL download link. Rerun with --hsl='<download link from the email>', --hsl-lib=FILE, or --no-hsl"
             case "$link" in
-                skip | Skip | SKIP) hsl_mode=skip; say "skipped" ;;
+                "" | skip | Skip | SKIP) hsl_mode=skip; say "skipped"; no_hsl_warning ;;
                 http://* | https://*) hsl_mode=build; hsl_src=$link ;;
                 *) link=$(absolute "$link")
                    case "$link" in

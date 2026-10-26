@@ -54,8 +54,15 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.7.1"
+#define VERSION "0.8.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
+/* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
+#define NO_HSL_WARNING \
+    "warning: no HSL MA27, so Ipopt uses MUMPS. MUMPS is not the most efficient linear\n" \
+    "solver for OPF, and its timings are not appropriate for benchmarking solver\n" \
+    "performance. Requesting HSL's free MA27 licence takes about 2 minutes:\n" \
+    "  " MA27_URL "\n" \
+    "then add it with: empower hsl '<download link from HSL's email>'\n"
 #define PGLIB_VERSION "23.07"
 #define PGLIB_RAW "https://raw.githubusercontent.com/power-grid-lib/pglib-opf/v" PGLIB_VERSION
 #define PGLIB_TGZ "https://github.com/power-grid-lib/pglib-opf/archive/refs/tags/v" PGLIB_VERSION ".tar.gz"
@@ -413,6 +420,7 @@ static const char *termination_status(int s) {
 
 #define MAXOPTS 512
 static char *opts[MAXOPTS];
+static int no_hsl = 0;   /* MUMPS because no HSL library is installed */
 static int nopts = 0;
 
 static void add_opt(const char *name, const char *value) {
@@ -473,10 +481,11 @@ static int cmpcase(const void *a, const void *b) {
     return nx != ny ? (nx < ny ? -1 : 1) : strcmp(x, y);
 }
 
-/* "all": every case at the top level of PGLib-OPF (typical operating conditions). */
-static void add_all(List *cases) {
+/* The whole PGLib-OPF library in <cases>/pglib-opf-<version>, downloaded once: the
+ * typical operating conditions at the top level, api/ and sad/ below. Its directory. */
+static const char *fetch_pglib(void) {
+    static char dir[8300];
     const char *cd = case_dir();
-    char dir[8300];
     snprintf(dir, sizeof dir, "%s/pglib-opf-" PGLIB_VERSION, cd);
     char marker[8400];
     snprintf(marker, sizeof marker, "%s/BASELINE.md", dir);
@@ -492,20 +501,47 @@ static void add_all(List *cases) {
     } else {
         step("using cached PGLib-OPF library %s", dir);
     }
+    return dir;
+}
+
+/* The PGLib-OPF cases (pglib_opf_*.m) in a directory, smallest first. */
+static void list_cases(const char *dir, List *found) {
     DIR *d = opendir(dir);
     if (!d) die("cannot read %s", dir);
     struct dirent *e;
-    List found = {0};
     while ((e = readdir(d))) {
         size_t L = strlen(e->d_name);
         if (!strncmp(e->d_name, "pglib_opf_", 10) && L > 2 && !strcmp(e->d_name + L - 2, ".m")) {
             char p[8600];
             snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-            push(&found, p);
+            push(found, p);
         }
     }
     closedir(d);
-    qsort(found.v, found.n, sizeof(char *), cmpcase);
+    qsort(found->v, found->n, sizeof(char *), cmpcase);
+}
+
+/* empower download: the whole PGLib-OPF library, for use offline or with paths. */
+static int download_pglib(void) {
+    const char *dir = fetch_pglib();
+    const char *sets[3][2] = {{"", "typical operating conditions"},
+                              {"/api", "active power increase (api)"},
+                              {"/sad", "small angle difference (sad)"}};
+    for (int k = 0; k < 3; k++) {
+        char sub[8400];
+        snprintf(sub, sizeof sub, "%s%s", dir, sets[k][0]);
+        List found = {0};
+        list_cases(sub, &found);
+        printf("  %3d cases, %s: %s\n", found.n, sets[k][1], sub);
+    }
+    printf("empower all solves the typical operating conditions; a path solves any case\n");
+    return 0;
+}
+
+/* "all": every case at the top level of PGLib-OPF (typical operating conditions). */
+static void add_all(List *cases) {
+    List found = {0};
+    list_cases(fetch_pglib(), &found);
     step("%d PGLib-OPF cases selected", found.n);
     for (int i = 0; i < found.n; i++) push(cases, found.v[i]);
 }
@@ -562,6 +598,7 @@ typedef struct {
 typedef struct {
     int status, iters, n, m;
     double obj, t_build, t_solve, t_cb, t_total;
+    double viol;   /* max absolute constraint violation, max(gl - g, g - gu, 0), at the solution */
 } Result;
 
 /* A CSV field, quoted when it holds a comma, quote, or newline. */
@@ -644,6 +681,12 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     fflush(stdout);
     printf("\n");
     r->iters = M.iters;
+    /* Ipopt returns the constraint values at the solution in g, unscaled. */
+    r->viol = 0;
+    for (int i = 0; i < m; i++) {
+        double v = gl[i] - g[i] > g[i] - gu[i] ? gl[i] - g[i] : g[i] - gu[i];
+        if (v > r->viol) r->viol = v;
+    }
     r->t_cb = M.tfev + M.tgev + M.tconsev + M.tjev + M.thev;
     step("%s: objective %.10g, %d iterations, %.3f s (%.3f s in model callbacks)",
          termination_status(r->status), r->obj, r->iters, r->t_solve, r->t_cb);
@@ -657,9 +700,9 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
 
     if (C->summary) {
         csv_field(C->summary, name);
-        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f\n", C->form,
+        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.3e\n", C->form,
                 termination_status(r->status), status_name(r->status), r->obj, r->iters, r->n,
-                r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb);
+                r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb, r->viol);
         fflush(C->summary);
     }
     rc = (r->status == 0 || r->status == 1) ? 0 : 1;
@@ -875,10 +918,61 @@ static int self_update(void) {
     return 0;
 }
 
+/* -------------------------------------------------------------------- hsl */
+
+/* empower hsl [LINK|FILE|LIB]: add HSL MA27 to this install, by running the installer for
+ * the installed release (which downloads nothing it already has) with the HSL download
+ * link, package, or library; without an argument the installer asks for it. */
+static int add_hsl(const char *arg) {
+    if (!*root) die("cannot find the empower install directory");
+    char tag[256] = "";
+    const char *rel = under_root("RELEASE");
+    FILE *f = rel ? fopen(rel, "r") : NULL;
+    if (f) {
+        if (fgets(tag, sizeof tag, f)) tag[strcspn(tag, "\r\n")] = 0;
+        fclose(f);
+    }
+    int cuda = under_root("cuda/bin/empower-cuda") != NULL;
+    size_t n = arg ? strlen(arg) : 0;
+    int is_lib = arg && ((n > 3 && !strcmp(arg + n - 3, ".so")) || strstr(arg, ".so.") ||
+                         (n > 6 && !strcmp(arg + n - 6, ".dylib")) || (n > 4 && !strcmp(arg + n - 4, ".dll")));
+    printf("adding HSL MA27 to empower %s in %s\n", VERSION, root);
+    fflush(stdout);
+#ifdef _WIN32
+    _putenv_s("EMPOWER_DIR", root);
+    _putenv_s("EMPOWER_YES", "1");
+    _putenv_s("EMPOWER_ADD_TO_PATH", "no");
+    if (*tag) _putenv_s("EMPOWER_VERSION", tag);
+    if (arg) _putenv_s(is_lib ? "EMPOWER_HSL_LIB" : "EMPOWER_HSL", arg);
+    (void)cuda;
+    char *cmd[] = {"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                   "irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | iex", NULL};
+#else
+    if (strchr(root, '\'') || strchr(tag, '\'') || (arg && strchr(arg, '\'')))
+        die("cannot pass a path or link with a single quote to the installer");
+    char opt[8400] = "";
+    if (arg) snprintf(opt, sizeof opt, " %s='%s'", is_lib ? "--hsl-lib" : "--hsl", arg);
+    char script[16400];
+    snprintf(script, sizeof script,
+             "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh"
+             " | EMPOWER_VERSION='%s' sh -s -- -y --path '%s' --add-to-path=no --backends=%s%s",
+             *tag ? tag : "latest", root, cuda ? "cpu,cuda" : "cpu", opt);
+    char *cmd[] = {"sh", "-c", script, NULL};
+#endif
+    int rc = run(cmd);
+    if (rc != 0) die("adding HSL failed");
+    return 0;
+}
+
 /* ------------------------------------------------------------------- main */
 
 static const char *usage =
     "usage: empower up           update empower to the latest release (same backends)\n"
+    "       empower download     download the whole PGLib-OPF v" PGLIB_VERSION " library (typical, api, sad)\n"
+    "       empower hsl [LINK|FILE|LIB]\n"
+    "                            add HSL MA27 to the cpu backend: the download link from\n"
+    "                            HSL's email (" MA27_URL "),\n"
+    "                            the package, or an HSL library; asks when not given\n"
     "       empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
     "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
@@ -888,7 +982,7 @@ static const char *usage =
     "               pglib_opf_case118_ieee.m), downloaded on first use; \"all\" solves\n"
     "               every PGLib-OPF v" PGLIB_VERSION " case for typical operating conditions\n"
     "  --form       formulation: polar (default) or rect (AC), or dc\n"
-    "  --device     cpu (Ipopt with HSL MA27) or cuda (MadNLP with cuDSS on an NVIDIA\n"
+    "  --device     cpu (Ipopt with HSL MA27, or MUMPS without HSL) or cuda (MadNLP with cuDSS on an NVIDIA\n"
     "               GPU; Linux x86_64); the installer's --backends selects which are\n"
     "               installed. Default: cpu if installed, else cuda\n"
     "  --solver     ipopt on cpu, madnlp on cuda (the defaults, and the only ones)\n"
@@ -899,7 +993,8 @@ static const char *usage =
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
     "               $EMPOWER_HSL_LIB. MA27 is the linear solver unless --options sets\n"
-    "               linear_solver\n"
+    "               linear_solver; without HSL it is MUMPS, which is slower for OPF\n"
+    "               and not for benchmarking (empower hsl adds MA27)\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
     "               $EMPOWER_IPOPT_LIB)\n"
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp, from the release)\n"
@@ -925,6 +1020,8 @@ int main(int argc, char **argv) {
     t_start = now();
     find_root();
     if (argc == 2 && (!strcmp(argv[1], "up") || !strcmp(argv[1], "update"))) return self_update();
+    if ((argc == 2 || argc == 3) && !strcmp(argv[1], "hsl")) return add_hsl(argc == 3 ? argv[2] : NULL);
+    if (argc == 2 && !strcmp(argv[1], "download")) return download_pglib();
     const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
                *hsllib = getenv("EMPOWER_HSL_LIB"),
                *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;
@@ -1062,14 +1159,13 @@ int main(int argc, char **argv) {
     for (int k = 0; k < nopts; k++)
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
     if (!C.linear_solver) {
-        if (!probe_ma27(&C.I, C.hsllib)) {
-            if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
-            die("no HSL library with MA27. Request the free licence at\n  %s\n"
-                "then rerun the installer with the download link from the email, or pass\n"
-                "--hsl-lib=PATH (or set EMPOWER_HSL_LIB) for an HSL library you already have",
-                MA27_URL);
+        if (probe_ma27(&C.I, C.hsllib)) C.linear_solver = "ma27";
+        else if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
+        else {
+            fprintf(stderr, "%s", NO_HSL_WARNING);
+            C.linear_solver = "mumps";
+            no_hsl = 1;
         }
-        C.linear_solver = "ma27";
     }
     step("linear solver: %s", C.linear_solver);
 
@@ -1081,7 +1177,7 @@ int main(int argc, char **argv) {
     C.summary = fopen(path, "w");
     if (!C.summary) die("cannot write %s", path);
     fputs("case,form,termination_status,raw_status,objective,iterations,nvar,ncon,"
-          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt\n",
+          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt,constraint_violation\n",
           C.summary);
 
     int solved = 0, failed = 0;
@@ -1105,17 +1201,23 @@ int main(int argc, char **argv) {
     for (int i = 0; i < cases.n; i++)
         if ((int)strlen(names[i]) > w) w = (int)strlen(names[i]);
     printf("\nSummary (%s)\n", path);
-    printf("  %-*s  %-14s  %14s  %5s  %8s  %8s\n", w, "case", "status", "objective", "iter",
-           "build", "solve");
+    printf("  Ipopt with %s. viol: largest absolute constraint violation, max(cl - c(x), c(x) - cu).\n"
+           "  solve = evals (model functions and derivatives) + solver (Ipopt and %s).\n",
+           C.linear_solver, C.linear_solver);
+    printf("  %-*s  %-14s  %14s  %9s  %5s  %8s  %8s  %8s  %8s\n", w, "case", "status", "objective",
+           "viol", "iter", "build", "solve", "evals", "solver");
     for (int i = 0; i < cases.n; i++) {
         Result *r = &res[i];
         if (r->n == 0) {   /* never reached the solver */
             printf("  %-*s  %s\n", w, names[i], "not solved (see the error above)");
             continue;
         }
-        printf("  %-*s  %-14s  %14.8g  %5d  %7.3fs  %7.3fs\n", w, names[i],
-               termination_status(r->status), r->obj, r->iters, r->t_build, r->t_solve);
+        printf("  %-*s  %-14s  %14.8g  %9.2e  %5d  %7.3fs  %7.3fs  %7.3fs  %7.3fs\n", w, names[i],
+               termination_status(r->status), r->obj, r->viol, r->iters, r->t_build, r->t_solve,
+               r->t_cb, r->t_solve - r->t_cb);
     }
     printf("  %d solved, %d not solved, %.1f s in total\n", solved, failed, now() - t_start);
+    if (no_hsl)
+        printf("  MUMPS, without HSL: not for benchmarking; `empower hsl` adds MA27 (see the warning above)\n");
     return failed ? 1 : 0;
 }
