@@ -9,7 +9,11 @@
 module EmpowerGPU
 
 using ExaModelsPower, MadNLP, MadNLPGPU, CUDACore, cuBLAS, cuSPARSE, cuSOLVER, CUDSS
+# CUDA itself, not only CUDACore: ExaModelsPower's CUDA extension, which precompiles model
+# building and evaluation on the GPU, loads with it.
+import CUDA
 import GPUCompiler
+using PrecompileTools: @compile_workload
 const CUDABackend = CUDACore.CUDAKernels.CUDABackend
 
 # Specializations that a traced run still compiled at run time; compiling them here
@@ -92,7 +96,22 @@ function solve_case(file, form, out, opts, summary)
 end
 
 function main(args::Vector{String})::Cint
+    rc = run(args)
+    flush(stdout); flush(stderr)
+    # Skip runtime teardown (CUDA context destruction, finalizers, atexit hooks): the
+    # process is done and the OS reclaims everything.
+    ccall(:_exit, Cvoid, (Cint,), rc)
+    return rc
+end
+
+# The app: solve each case and write the results; the exit code.
+function run(args::Vector{String})::Cint
     t_start = time()
+    # EMPOWER_TRACE_COMPILE=1: print every method compiled at run time (as
+    # `precompile(...)` statements with their compile time) to stderr, to find what the
+    # executable still compiles on first use.
+    get(ENV, "EMPOWER_TRACE_COMPILE", "") == "1" &&
+        ccall(:jl_force_trace_compile_timing_enable, Cvoid, ())
     form, out, opts, files = "polar", "empower-results", Pair{Symbol,Any}[], String[]
     i = 1
     while i <= length(args)
@@ -109,7 +128,8 @@ function main(args::Vector{String})::Cint
         i += 1
     end
     haskey(FORMS, form) || (println(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
-    println("GPU: ", CUDACore.name(CUDACore.device()))
+    t_gpu = @elapsed (dev = CUDACore.device(); CUDACore.synchronize())
+    println("GPU: ", CUDACore.name(dev), " (context ", round(t_gpu; digits = 3), " s)")
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
@@ -139,16 +159,26 @@ function main(args::Vector{String})::Cint
     nok = count(r -> r.ok, results)
     println("  ", nok, " solved, ", length(results) - nok, " not solved, ",
             round(time() - t_start; digits = 1), " s in total")
-    flush(stdout); flush(stderr)
-    # Skip runtime teardown (CUDA context destruction, finalizers, atexit hooks): the
-    # process is done and the OS reclaims everything.
-    ccall(:_exit, Cvoid, (Cint,), nok == length(results) ? 0 : 1)
-    return Cint(0)
+    return Cint(nok == length(results) ? 0 : 1)
 end
 
-# The GPU kernels compiled for the other architectures empower-cuda supports (V100, RTX
-# 20 to 50 series, A100, L40, H100, B200), one package per architecture: loading them
-# brings their images, and so the cubins, into the executable.
-import EmpowerKernels70, EmpowerKernels75, EmpowerKernels80, EmpowerKernels86, EmpowerKernels89, EmpowerKernels90, EmpowerKernels100, EmpowerKernels120
+# The app's own run on the bundled case14, in each formulation, so the executable compiles
+# nothing on a first run: building the model, solving it, and writing the results. Needs
+# the GPU this package is built on.
+@compile_workload begin
+    if CUDACore.functional()
+        case = joinpath(pkgdir(ExaModelsPower), "data", "pglib_opf_case14_ieee.m")
+        out = mktempdir()
+        redirect_stdout(devnull) do
+            for form in ("polar", "rect", "dc")
+                # No options (the usual run), then a common set.
+                run(["--form=$form", "--output=$out", case])
+                run(["--form=$form", "--output=$out", "--option", "print_level=WARN",
+                     "--option", "tol=1e-8", "--option", "max_iter=3000", case])
+            end
+        end
+        rm(out; recursive = true)
+    end
+end
 
 end # module EmpowerGPU

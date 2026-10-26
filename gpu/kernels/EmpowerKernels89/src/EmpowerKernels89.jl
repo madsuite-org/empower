@@ -3,6 +3,9 @@
 # precompiles them in parallel (a precompile process has one thread).
 module EmpowerKernels89
 
+# EmpowerGPU first: its kernels (and those of the packages it loads, CUDA's extensions
+# included) are the ones compiled for this architecture.
+import EmpowerGPU
 using ExaModelsPower, MadNLP, MadNLPGPU, CUDACore, cuBLAS, cuSPARSE, cuSOLVER, CUDSS
 import GPUCompiler
 using PrecompileTools: @compile_workload

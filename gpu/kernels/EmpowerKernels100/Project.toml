@@ -3,6 +3,7 @@ uuid = "be593908-fbe0-58ea-bca6-1751747d8554"
 version = "0.1.0"
 
 [deps]
+EmpowerGPU = "6a4f1e2c-8d3b-4f7a-9c21-3e5b7d9f0a41"
 CUDACore = "bd0ed864-bdfe-4181-a5ed-ce625a5fdea2"
 CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
 ExaModelsPower = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
