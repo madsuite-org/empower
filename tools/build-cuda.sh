@@ -24,6 +24,11 @@ name=empower-cuda$cuda-linux-x86_64
 env=build-cuda$cuda
 stage=stage-cuda$cuda
 
+# Compile for the CPU targets of the official Julia binaries, as tools/build.sh does, not
+# for the build machine's CPU (a runner's AVX-512 image is rejected on a CPU without it).
+JULIA_CPU_TARGET='generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)'
+export JULIA_CPU_TARGET
+
 rm -rf "$env" "$stage"
 mkdir -p "$env" "$stage"
 cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.jl gpu/EmpowerGPU "$env/"
