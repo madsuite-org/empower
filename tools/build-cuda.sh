@@ -28,6 +28,10 @@ stage=stage-cuda$cuda
 # for the build machine's CPU (a runner's AVX-512 image is rejected on a CPU without it).
 JULIA_CPU_TARGET='generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1);x86-64-v4,-rdrnd,base(1)'
 export JULIA_CPU_TARGET
+# No persistent compiled-code store (CompilerCaching's LMDB object cache): a build does
+# not reuse it, and the kernel packages precompile in parallel, which hung on the CI
+# runners, whose depot is on NFS, where LMDB's locking across processes is unreliable.
+export JULIA_OBJCACHE=0
 
 rm -rf "$env" "$stage"
 mkdir -p "$env" "$stage"
