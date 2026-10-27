@@ -117,4 +117,4 @@ if command -v pigz >/dev/null; then
 else
     tar -C "$stage" -czf "$name.tar.gz" empower-cuda
 fi
-echo "built $name.tar.gz ($(du -h "$name.tar.gz" | cut -f1))"
+echo "built $name.tar.gz ($(($(wc -c < "$name.tar.gz") / 1048576)) MiB)"

@@ -134,7 +134,9 @@ function solve_case(file, form, out, opts, summary)
     step("wrote ", dir, "/{solution.m, madnlp.log}")
     t_cb = r.counters.eval_function_time
     # The largest absolute constraint violation, max(cl - c(x), c(x) - cu, 0), unscaled.
-    c, cl, cu = Array(r.constraints), Array(model.meta.lcon), Array(model.meta.ucon)
+    c = Array(r.constraints)::Vector{Float64}
+    cl = Array(model.meta.lcon)::Vector{Float64}
+    cu = Array(model.meta.ucon)::Vector{Float64}
     viol = 0.0
     for i in eachindex(c)
         viol = max(viol, cl[i] - c[i], c[i] - cu[i])
