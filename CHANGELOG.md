@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.9.1 (in progress)
+## v0.9.1
 
 - `empower-cuda` loads its kernels on 4 threads (about 0.25 s, from 0.8 s) and then solves the built-in case14 once, silently, in the run's formulation and options (`warm-up`, about 0.13 s; `EMPOWER_NO_WARMUP=1` skips it): the first use of cuDSS, of the kernels and of MadNLP's solver setup no longer falls in the first case. On an RTX 3080, case118 as the first case of a run now solves as fast as the second.
 - `EMPOWER_TRACE_COMPILE=1` also reports each case's garbage collection (pauses, mark and sweep time) and compile time, and `EMPOWER_GC_LOG=1` turns on Julia's log of each collection.
