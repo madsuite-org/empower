@@ -6,6 +6,7 @@
 - `empower hsl [LINK|FILE|LIB]` adds HSL MA27 to an existing install: the download link from HSL's email, the downloaded package, or an HSL library. It runs the installer for the installed release, which downloads nothing else.
 - `empower download` downloads the whole PGLib-OPF v23.07 library: the typical operating conditions, `api` and `sad` cases.
 - The summary at the end of a run, and `summary.csv`, give the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu), and split the solve time into model evaluations and the solver; the summary names the linear solver.
+- Tidier output in both backends: a ruled heading per case, the summary as a ruled table, dimmed timestamps and the status in green or red on a terminal (`NO_COLOR` turns colours off); the solver's own log stays on screen.
 - The cuda backend compiles nothing on a terminal either: printing to a terminal compiled 9 methods (about 0.13 s) on each run.
 
 ## v0.7.1
