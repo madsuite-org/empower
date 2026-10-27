@@ -4,7 +4,10 @@ on:
   push:
     tags: ["v*"]
     branches: [main]
+    # Documentation alone builds nothing (tags are built whatever they change).
+    paths-ignore: ["**.md", CITATION.bib, LICENSE]
   pull_request:
+    paths-ignore: ["**.md", CITATION.bib, LICENSE]
   workflow_dispatch:
 
 # Read-only unless a job asks for more.
