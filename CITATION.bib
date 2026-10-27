@@ -1,6 +1,18 @@
 % Cite each component that your work relies on. See "Citation" in README.md.
 
 % Algebraic modeling system: ExaModels.jl
+@misc{shin2026examodels,
+  title={{ExaModels.jl}: An Algebraic Modeling System for Nonlinear Programming on {GPUs}},
+  author={Shin, Sungho and Schanen, Michel and Pacaud, Fran{\c{c}}ois and Montoison, Alexis and Anitescu, Mihai},
+  year={2026},
+  eprint={2608.16265},
+  archivePrefix={arXiv},
+  primaryClass={math.OC},
+  doi={10.48550/arXiv.2608.16265}
+}
+
+% ExaModels.jl, and the GPU solver (cuda backend): MadNLP.jl's condensed-space
+% interior-point method
 @article{shin2024accelerating,
   title={Accelerating optimal power flow with {GPU}s: {SIMD} abstraction of nonlinear programs and condensed-space interior-point methods},
   author={Shin, Sungho and Anitescu, Mihai and Pacaud, Fran{\c{c}}ois},
@@ -11,7 +23,39 @@
   publisher={Elsevier}
 }
 
-% Solver: Ipopt
+% GPU programming (cuda backend): CUDA.jl
+@article{besard2018juliagpu,
+  author={Besard, Tim and Foket, Christophe and De Sutter, Bjorn},
+  title={Effective Extensible Programming: Unleashing {Julia} on {GPUs}},
+  journal={IEEE Transactions on Parallel and Distributed Systems},
+  year={2018},
+  doi={10.1109/TPDS.2018.2872064},
+  archivePrefix={arXiv},
+  eprint={1712.03112},
+  primaryClass={cs.PL}
+}
+
+% GPU linear solver (cuda backend): NVIDIA cuDSS; state the version, which empower
+% records in cuda/nvidia-artifacts.tsv
+@misc{nvidia_cudss,
+  title={{NVIDIA cuDSS}: a {GPU}-accelerated direct sparse solver library},
+  author={{NVIDIA Corporation}},
+  howpublished={\url{https://developer.nvidia.com/cudss}}
+}
+
+% Graph partitioning (cuda backend): METIS, which cuDSS uses for its ordering
+@article{karypis1998fast,
+  title={A fast and high quality multilevel scheme for partitioning irregular graphs},
+  author={Karypis, George and Kumar, Vipin},
+  journal={SIAM Journal on Scientific Computing},
+  volume={20},
+  number={1},
+  pages={359--392},
+  year={1998},
+  doi={10.1137/S1064827595287997}
+}
+
+% Solver (cpu backend): Ipopt
 @article{wachter2006implementation,
   title={On the implementation of a primal-dual interior point filter line search algorithm for large-scale nonlinear programming},
   author={W{\"a}chter, Andreas and Biegler, Lorenz T.},
