@@ -14,7 +14,7 @@ Each `empower-<platform>.tar.gz` contains `licenses/` with the license file of e
 | ExaModelsPower.jl | MIT | https://github.com/madsuite-org/ExaModelsPower.jl |
 | ExaPowerIO.jl | MIT | https://github.com/madsuite-org/ExaPowerIO.jl |
 | NLPModels.jl, SolverCore.jl, LinearOperators.jl | MPL-2.0 | https://github.com/JuliaSmoothOptimizers |
-| Other dependencies (JSON, PrettyTables, Tables, TimerOutputs, and others) | MIT | see `licenses/julia-packages/` |
+| Other dependencies (JSON, JSON3, PowerIO, PrettyTables, Tables, TimerOutputs, and others) | MIT | see `licenses/julia-packages/` |
 
 The MPL-2.0 packages are used unmodified; their source code is available at the addresses above.
 
