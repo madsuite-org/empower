@@ -64,8 +64,11 @@ casename(path) = first(splitext(basename(path)))
 # Output goes out as one string per line: print(io, ...) compiles per stream type (a file,
 # a pipe, a terminal), and the executable must not compile on a terminal it was not built
 # on; string(...) does not depend on the stream, and write(::IO, ::String) is one method.
-say(io::IO, args...) = (write(io, string(args..., "\n")); nothing)
+# The stream is not specialized on: the methods compiled at build time (with standard
+# output redirected) serve a file, a pipe and a terminal alike.
+say(@nospecialize(io::IO), args...) = (write_line(io, string(args...)); nothing)
 say(args...) = say(stdout, args...)
+write_line(@nospecialize(io::IO), s::String) = (write(io, s * "\n"); nothing)
 
 # Styles on a terminal (unless NO_COLOR is set), as the empower driver prints them.
 const STYLE = Dict{Symbol,String}()
@@ -89,7 +92,7 @@ function fmt_g(x)   # %.8g
     e = floor(Int, log10(abs(x)))
     -4 <= e < 8 || return Base.Ryu.writeexp(x, 7)
     t = Base.Ryu.writefixed(x, max(7 - e, 0))
-    occursin('.', t) ? rstrip(rstrip(t, '0'), '.') : t
+    occursin('.', t) ? String(rstrip(rstrip(t, '0'), '.')) : t
 end
 
 # A table with a ruled header, as the cpu backend prints it; align[k] is 'l' or 'r'.
