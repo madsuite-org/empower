@@ -11,6 +11,7 @@
 #define _DARWIN_C_SOURCE
 #endif
 #include <ctype.h>
+#include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <math.h>
@@ -35,6 +36,7 @@
 #define MKDIR(p) _mkdir(p)
 #else
 #include <dlfcn.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -225,6 +227,20 @@ static void *sym(void *h, const char *prefix, const char *name) {
 }
 
 /* Run a program found on PATH and wait; returns its exit status, or -1. */
+#ifndef _WIN32
+/* The child run() waits for. On Ctrl-C (SIGINT), SIGTERM or SIGHUP the child is killed
+ * at once: empower-cuda, busy on the GPU, would otherwise keep solving after empower
+ * has exited, and print into the terminal. */
+static volatile pid_t child_pid = 0;
+static void on_signal(int sig) {
+    pid_t c = child_pid;
+    if (c > 0) kill(c, SIGKILL);
+    static const char msg[] = "\ninterrupted\n";
+    (void)!write(2, msg, sizeof msg - 1);
+    _exit(128 + sig);
+}
+#endif
+
 static int run(char *const args[]) {
 #ifdef _WIN32
     /* _spawnvp re-joins argv with spaces, so quote each argument. */
@@ -244,8 +260,26 @@ static int run(char *const args[]) {
 #else
     pid_t pid;
     int st;
+    struct sigaction sa, old_int, old_term, old_hup;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_signal;
+    sigemptyset(&sa.sa_mask);
     if (posix_spawnp(&pid, args[0], NULL, NULL, args, environ) != 0) return -1;
-    if (waitpid(pid, &st, 0) < 0) return -1;
+    child_pid = pid;
+    sigaction(SIGINT, &sa, &old_int);
+    sigaction(SIGTERM, &sa, &old_term);
+    sigaction(SIGHUP, &sa, &old_hup);
+    int w;
+    while ((w = waitpid(pid, &st, 0)) < 0 && errno == EINTR) {}
+    sigaction(SIGINT, &old_int, NULL);
+    sigaction(SIGTERM, &old_term, NULL);
+    sigaction(SIGHUP, &old_hup, NULL);
+    child_pid = 0;
+    if (w < 0) return -1;
+    if (WIFSIGNALED(st) && (WTERMSIG(st) == SIGINT || WTERMSIG(st) == SIGTERM)) {
+        fprintf(stderr, "\ninterrupted\n");
+        exit(128 + WTERMSIG(st));
+    }
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 #endif
 }
