@@ -18,6 +18,7 @@ for f in polar rect dc; do
     cat "$f/summary.csv"
     for c in pglib_opf_case14_ieee pglib_opf_case118_ieee; do
         grep -q "status = LOCALLY_SOLVED" "$f/$c/solution.m"
+        test "$(grep -c '^[a-z_]*,[-0-9.e+]*$' "$f/$c/violations.csv")" -eq 6
         test -s "$f/$c/madnlp.log"
     done
 done
@@ -27,7 +28,9 @@ awk -F, 'FNR > 1 {
     dc = ($2 == "dc")
     ref = ($1 ~ /case14_/) ? (dc ? 2051.5 : 2178.1) : (dc ? 93101 : 97214)
     if (($5 - ref) / ref > 1e-4 || ($5 - ref) / ref < -1e-4) { print "objective mismatch: " $0; bad = 1 }
-    if ($NF == "" || $NF > 1e-5) { print "constraint violation: " $0; bad = 1 }
+    # constraint_violation, then the six violation_* groups
+    for (k = NF - 6; k <= NF; k++)
+        if ($k == "" || $k > 1e-5) { print "violation (column " k "): " $0; bad = 1 }
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
 # The executable compiles nothing at run time: a stale gpu/precompile_statements.jl or a
 # workload that misses a code path shows up here as compiled methods.

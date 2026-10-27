@@ -8,7 +8,7 @@ t=$(mktemp -d)
 cd "$t"
 # CI has no HSL licence: install without HSL and ask for MUMPS explicitly.
 export EMPOWER_ARCHIVE="$root/empower-$plat.tar.gz" EMPOWER_SKIP_HSL=1
-sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no
+sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --backends=cpu
 op="$t/empower/bin/empower"
 "$op" case14_ieee case118_ieee --form=polar --options="tol=1e-8 max_iter=500 linear_solver=mumps" --output=polar
 "$op" case14_ieee case118_ieee --form=rect --options=linear_solver=mumps --output=rect
@@ -25,9 +25,10 @@ test "$(grep -c " cases, " download.log)" -eq 3
 for f in polar rect dc; do
     cat "$f/summary.csv"
     grep -q "^empower: " "$f/system.txt"
-    head -1 "$f/summary.csv" | grep -q ",constraint_violation$"
+    head -1 "$f/summary.csv" | grep -q ",constraint_violation,.*,violation_generation$"
     for c in pglib_opf_case14_ieee pglib_opf_case118_ieee; do
         grep -q "status = LOCALLY_SOLVED" "$f/$c/solution.m"
+        test "$(grep -c '^[a-z_]*,[-0-9.e+]*$' "$f/$c/violations.csv")" -eq 6
         grep -q "^mpc.branch" "$f/$c/solution.m"
         grep -qi "linear solver mumps" "$f/$c/ipopt.log"
     done
@@ -38,6 +39,8 @@ awk -F, 'FNR > 1 {
     dc = ($2 == "dc")
     ref = ($1 ~ /case14_/) ? (dc ? 2051.5 : 2178.1) : (dc ? 93101 : 97214)
     if (($5 - ref) / ref > 1e-4 || ($5 - ref) / ref < -1e-4) { print "objective mismatch: " $0; bad = 1 }
-    if ($NF == "" || $NF > 1e-5) { print "constraint violation: " $0; bad = 1 }
+    # constraint_violation, then the six violation_* groups
+    for (k = NF - 6; k <= NF; k++)
+        if ($k == "" || $k > 1e-5) { print "violation (column " k "): " $0; bad = 1 }
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
 echo "all checks passed"

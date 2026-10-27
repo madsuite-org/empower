@@ -41,6 +41,11 @@ foreach ($f in 'polar', 'rect', 'dc') {
         $r = $ref[$row.case]
         if ([math]::Abs(([double]$row.objective - $r) / $r) -gt 1e-4) { Write-Host "objective mismatch: $($row.case) $f $($row.objective)"; $bad = 1 }
         if ([double]$row.constraint_violation -gt 1e-5) { Write-Host "constraint violation: $($row.case) $f $($row.constraint_violation)"; $bad = 1 }
+        foreach ($g in 'power_balance', 'power_flow', 'branch_flow', 'angle_difference', 'voltage', 'generation') {
+            $v = $row."violation_$g"
+            if (-not $v -or [double]$v -gt 1e-5) { Write-Host "violation of $g`: $($row.case) $f $v"; $bad = 1 }
+        }
+        if ((Get-Content "$f\$($row.case)\violations.csv" | Select-Object -Skip 1).Count -ne 6) { Write-Host "violations.csv: $($row.case) $f"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'linear solver mumps' -Path "$f\$($row.case)\ipopt.log")) { Write-Host "not mumps: $($row.case) $f"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'status = LOCALLY_SOLVED' -Path "$f\$($row.case)\solution.m")) { Write-Host "no solved case file: $($row.case) $f"; $bad = 1 }
     }

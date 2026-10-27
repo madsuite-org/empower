@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.2
+
+- The constraint and bound violations by group: power balance, power flow equations, branch flow limits, angle differences, voltage and generation bounds (ExaModelsPower 0.4.4's `opf_violations`, compiled into the model library as its `violations` writer). Each case writes `<case>/violations.csv`, `summary.csv` has a `violation_*` column per group, and the end of the run prints them as a second table.
+- `empower check` solves case14 with each installed backend, and the installer runs it as its last step. For cuda it also records which parts of `empower-cuda` and the NVIDIA libraries a run reads first (on file systems that let it evict them from memory, such as NFS); later runs read those ahead while starting, which makes the first run on a new machine or node faster.
+- With the cuda backend, `empower` warns when its memory limit (a Slurm job's `--mem`, a container's limit) is below 8 GB: with less, runs re-read their files constantly and are many times slower.
+- An HSL library from a Julia package's full build (HSL_jll's `libhsl.so`, which also links MPI) installs: the installer adds MPICH from conda-forge for it.
+- A push that only changes documentation builds nothing in CI.
+
 ## v0.9.1
 
 - `empower-cuda` loads its kernels on 4 threads (about 0.25 s, from 0.8 s) and then solves the built-in case14 once, silently, in the run's formulation and options (`warm-up`, about 0.13 s; `EMPOWER_NO_WARMUP=1` skips it): the first use of cuDSS, of the kernels and of MadNLP's solver setup no longer falls in the first case. On an RTX 3080, case118 as the first case of a run now solves as fast as the second.

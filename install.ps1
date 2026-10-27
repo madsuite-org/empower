@@ -157,7 +157,7 @@ function Lock-Args($name, [string[]]$spec) {
 }
 
 # --- 1. empower: download, verify, unpack aside, then swap in ---
-Section '[1/5] empower'
+Section '[1/6] empower'
 $ReleaseFile = Join-Path $Dir 'RELEASE'
 $Installed = if (Test-Path $ReleaseFile) { (Get-Content $ReleaseFile -TotalCount 1) } else { '' }
 if ((Test-Path $Exe) -and ($Installed -eq $Tag) -and -not $env:EMPOWER_ARCHIVE) {
@@ -209,7 +209,7 @@ function Write-NoHslWarning {
     Say "  $Ma27Url"
     Say "then add it with: empower hsl '<download link from HSL''s email>'"
 }
-Section '[2/5] HSL MA27 package'
+Section '[2/6] HSL MA27 package'
 $HslMode = ''; $HslSrc = ''; $UserLib = ''
 if ($env:EMPOWER_HSL_LIB) { $HslMode = 'lib'; $UserLib = [IO.Path]::GetFullPath($env:EMPOWER_HSL_LIB); Say "your library $UserLib" }
 elseif ($env:EMPOWER_HSL) { $HslMode = 'build'; $HslSrc = $env:EMPOWER_HSL }
@@ -280,7 +280,7 @@ if ($HslMode -eq 'build') {
 }
 
 # --- 3. Ipopt from conda-forge; recreated when the release's lock changes ---
-Section '[3/5] Ipopt'
+Section '[3/6] Ipopt'
 $IpoptDir = Join-Path $Dir 'ipopt'
 $IpoptLib = Join-Path $IpoptDir 'Library\bin\ipopt-3.dll'
 $Lock = Join-Path $Dir 'locks\ipopt.txt'
@@ -314,7 +314,7 @@ function Build-Ma27($compiler) {
 }
 switch ($HslMode) {
     'lib' {
-        Section '[4/5] HSL MA27'
+        Section '[4/6] HSL MA27'
         if (-not (Test-Path $UserLib)) { Fail "HSL library not found: $UserLib" }
         Copy-Item $UserLib $HslLib -Force
         "your library $UserLib" | Set-Content (Join-Path $HslDir 'SOURCE')
@@ -322,7 +322,7 @@ switch ($HslMode) {
         Say "your library $UserLib (MA27 checked)"
     }
     'build' {
-        Section '[4/5] HSL MA27'
+        Section '[4/6] HSL MA27'
         $ok = $false
         if ($Fc) {
             $ok = (Build-Ma27 $Fc) -and (Test-Hsl)
@@ -339,7 +339,7 @@ switch ($HslMode) {
         Say "$HslLib (MA27 checked)"
     }
     'keep' {
-        Section '[4/5] HSL MA27'
+        Section '[4/6] HSL MA27'
         if (-not (Test-Hsl)) { Fail 'the installed HSL library no longer works with Ipopt; rerun with $env:EMPOWER_HSL set' }
         Say "$(Get-Content (Join-Path $HslDir 'SOURCE') -ErrorAction SilentlyContinue): $HslLib (MA27 checked)"
     }
@@ -347,7 +347,17 @@ switch ($HslMode) {
 Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 
 # --- 5. PATH, as juliaup does it on Windows: the user PATH, and this session ---
-Section '[5/5] PATH'
+# --- 5. check: solve case14 ---
+Section '[5/6] check'
+if ((& $Exe --help 2>&1 | Out-String) -match 'empower check') {
+    $out = & $Exe check 2>&1 | Out-String
+    $lines = $out -split "`r?`n" | Where-Object { $_ -match '^\s+(cpu|cuda):' }
+    if ($lines) { $lines | ForEach-Object { Write-Host $_ } } else { Say 'the check did not pass; empower is installed' }
+} else {
+    Say 'skipped (this release has no empower check)'
+}
+
+Section '[6/6] PATH'
 if ($AddToPath -match '^(yes|1)$') {
     $parts = Get-UserPath
     if ($parts -notcontains $BinDir) { Set-UserPath (@($BinDir) + $parts) }

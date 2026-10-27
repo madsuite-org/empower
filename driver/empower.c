@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #define _DARWIN_C_SOURCE
+#define _DEFAULT_SOURCE /* mincore on Linux */
 #endif
 #include <ctype.h>
 #include <errno.h>
@@ -36,6 +37,7 @@
 #define MKDIR(p) _mkdir(p)
 #else
 #include <dlfcn.h>
+#include <sys/mman.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/utsname.h>
@@ -56,7 +58,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.9.1"
+#define VERSION "0.9.2"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -357,6 +359,10 @@ typedef struct {
     /* ExaModelsPower's MATPOWER writer, compiled into the library. */
     int32_t (*write_matpower)(int32_t, const char *, const double *, const double *,
                               const double *, const double *, double, const char *);
+    /* Its violations writer (ExaModelsPower 0.4.4 and newer; NULL in older libraries):
+     * the largest violation of each group of constraints and bounds, as CSV. */
+    int32_t (*write_violations)(int32_t, const char *, const double *, const double *,
+                                const double *, const double *, double, const char *);
     int32_t id;
     long nfev, ngev, nconsev, njev, nhev, iters;
     double tfev, tgev, tconsev, tjev, thev;
@@ -377,6 +383,34 @@ static void load_model(Model *M, void *h, const char *p) {
     M->hess_structure = sym(h, p, "hess_structure");
     M->hess = sym(h, p, "hess");
     M->write_matpower = sym(h, p, "write_matpower");
+    char wv[256];
+    snprintf(wv, sizeof wv, "%s_write_violations", p);
+    M->write_violations = lib_sym(h, wv);
+}
+
+/* The groups ExaModelsPower's violations writer reports, in its order, and the short
+ * names the summary uses for them. */
+#define NGROUPS 6
+static const char *group_key[NGROUPS] = {"power_balance", "power_flow", "branch_flow",
+                                         "angle_difference", "voltage", "generation"};
+static const char *group_head[NGROUPS] = {"balance", "flow eqs", "branch lim", "angle",
+                                          "voltage", "gen"};
+
+/* Read the writer's CSV (a header, then group,violation rows) into v. Returns 0 on success. */
+static int read_violations(const char *path, double v[NGROUPS]) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 1;
+    char line[256];
+    int found = 0;
+    while (fgets(line, sizeof line, f)) {
+        char *c = strchr(line, ',');
+        if (!c) continue;
+        *c = 0;
+        for (int k = 0; k < NGROUPS; k++)
+            if (!strcmp(line, group_key[k])) { v[k] = strtod(c + 1, NULL); found++; }
+    }
+    fclose(f);
+    return found == NGROUPS ? 0 : 1;
 }
 
 /* --------------------------------------------------------------- Ipopt API */
@@ -703,6 +737,8 @@ typedef struct {
     int status, iters, n, m;
     double obj, t_build, t_solve, t_cb, t_total;
     double viol;   /* max absolute constraint violation, max(gl - g, g - gu, 0), at the solution */
+    double vg[NGROUPS];   /* the largest violation of each group (violations writer) */
+    int has_groups;
 } Result;
 
 /* A CSV field, quoted when it holds a comma, quote, or newline. */
@@ -801,13 +837,22 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         case_error("could not write %s", path);
     else
         step("wrote %s/{solution.m, ipopt.log}", out);
+    if (M.write_violations) {
+        snprintf(path, sizeof path, "%s/violations.csv", out);
+        r->has_groups = M.write_violations(M.id, path, x, y, zl, zu, r->obj,
+                                           termination_status(r->status)) == 0 &&
+                        read_violations(path, r->vg) == 0;
+    }
     r->t_total = now() - t_case;
 
     if (C->summary) {
         csv_field(C->summary, name);
-        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.3e\n", C->form,
+        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.3e", C->form,
                 termination_status(r->status), status_name(r->status), r->obj, r->iters, r->n,
                 r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb, r->viol);
+        for (int k = 0; k < NGROUPS; k++)
+            r->has_groups ? fprintf(C->summary, ",%.3e", r->vg[k]) : fprintf(C->summary, ",");
+        fprintf(C->summary, "\n");
         fflush(C->summary);
     }
     rc = (r->status == 0 || r->status == 1) ? 0 : 1;
@@ -930,6 +975,53 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     fclose(f);
 }
 
+#ifdef __linux__
+static void prefetch_working_set(void);
+#endif
+
+/* ------------------------------------------------------------ memory limit */
+
+#ifdef __linux__
+/* The memory this process may use under its control group (a Slurm job's --mem, a
+ * container's limit): the smallest limit on the path from its cgroup to the root, or 0
+ * when there is none. */
+static unsigned long long cgroup_memory_limit(void) {
+    FILE *f = fopen("/proc/self/cgroup", "r");
+    if (!f) return 0;
+    char line[4096], path[4096] = "", file[8300];
+    int v2 = 0;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\n")] = 0;
+        if (!strncmp(line, "0::", 3)) { snprintf(path, sizeof path, "%s", line + 3); v2 = 1; }
+        else {
+            char *m = strstr(line, ":memory:");
+            if (m && !v2) snprintf(path, sizeof path, "%s", m + 8);
+        }
+    }
+    fclose(f);
+    unsigned long long best = 0;
+    for (;;) {
+        snprintf(file, sizeof file,
+                 v2 ? "/sys/fs/cgroup%s/memory.max" : "/sys/fs/cgroup/memory%s/memory.limit_in_bytes", path);
+        FILE *g = fopen(file, "r");
+        if (g) {
+            char b[64];
+            if (fgets(b, sizeof b, g) && strncmp(b, "max", 3)) {
+                unsigned long long v = strtoull(b, NULL, 10);
+                /* cgroup v1 reports "no limit" as a huge number */
+                if (v > 0 && v < (1ULL << 60) && (best == 0 || v < best)) best = v;
+            }
+            fclose(g);
+        }
+        char *slash = strrchr(path, '/');
+        if (!slash) break;
+        if (slash == path && !path[1]) break;   /* at the root */
+        slash[slash == path ? 1 : 0] = 0;       /* parent, keeping "/" for the root */
+    }
+    return best;
+}
+#endif
+
 /* ------------------------------------------------------------------- cuda */
 
 /* --device=cuda: resolve the cases here, then solve them all in one run of empower-cuda,
@@ -942,6 +1034,23 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     const char *exe = under_root("cuda/bin/empower-cuda");
     if (!exe || access(exe, X_OK) != 0)
         die("the cuda backend is not installed: rerun the installer with --backends=cpu,cuda");
+#ifdef __linux__
+    /* Below about 8 GB the system keeps evicting empower-cuda's 2 GB executable and its
+     * NVIDIA libraries and reading them again: on a Slurm job with the default 1 GB a run
+     * took 30 to 60 s instead of 2 s. */
+    unsigned long long lim = cgroup_memory_limit();
+    if (lim && lim < (8ULL << 30))
+        fprintf(stderr,
+                "\n%s%swarning:%s this process may use only %.1f GB of memory (its cgroup limit, such as\n"
+                "a Slurm job's --mem). The cuda backend needs about 8 GB: with less, the system\n"
+                "keeps re-reading its files, and runs are many times slower. Request more memory,\n"
+                "for example salloc/sbatch --mem=32G.\n\n",
+                BOLD, YELLOW, RST, lim / 1e9);
+    /* Read ahead what a run reads first (recorded by empower check), in large requests,
+     * while empower-cuda starts: on a cold cache (a new node, files on NFS) this replaces
+     * tens of thousands of page faults. */
+    if (!getenv("EMPOWER_NO_WORKING_SET")) prefetch_working_set();
+#endif
     /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
     char depot[16400];
     snprintf(depot, sizeof depot, "%s/cuda/share/julia:%s/cuda-depot", root, root);
@@ -1067,6 +1176,198 @@ static void print_table(int ncol, const char **head, const char *align, int nrow
 
 /* -------------------------------------------------------------------- hsl */
 
+/* ------------------------------------------------------- working set (cuda) */
+
+#ifdef __linux__
+/* The files a cuda run reads: empower-cuda and the shared libraries it loads. */
+static void cuda_files(List *out) {
+    char dirs[3][8300];
+    snprintf(dirs[0], sizeof dirs[0], "%s/cuda", root);
+    snprintf(dirs[1], sizeof dirs[1], "%s/cuda-depot", root);
+    dirs[2][0] = 0;
+    for (int d = 0; dirs[d][0]; d++) {
+        /* a small explicit-stack walk; the trees are a few levels deep */
+        List stack = {0};
+        push(&stack, dirs[d]);
+        while (stack.n) {
+            char *dir = stack.v[--stack.n];
+            DIR *h = opendir(dir);
+            if (!h) { free(dir); continue; }
+            struct dirent *e;
+            while ((e = readdir(h))) {
+                if (e->d_name[0] == '.') continue;
+                char p[8600];
+                snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+                struct stat st;
+                if (lstat(p, &st) != 0) continue;
+                if (S_ISDIR(st.st_mode)) push(&stack, p);
+                else if (S_ISREG(st.st_mode) && (strstr(e->d_name, ".so") || !strcmp(e->d_name, "empower-cuda")))
+                    push(out, p);
+            }
+            closedir(h);
+            free(dir);
+        }
+        free(stack.v);
+    }
+}
+
+/* Drop the files from the page cache. Returns the fraction of their pages still resident
+ * afterwards (1 on file systems that ignore the request, ZFS for one). */
+static double evict(List *files) {
+    long page = sysconf(_SC_PAGESIZE);
+    size_t total = 0, resident = 0;
+    for (int i = 0; i < files->n; i++) {
+        int fd = open(files->v[i], O_RDONLY);
+        if (fd < 0) continue;
+        posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+        struct stat st;
+        if (fstat(fd, &st) == 0 && st.st_size > 0) {
+            void *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+            if (m != MAP_FAILED) {
+                size_t n = (st.st_size + page - 1) / page;
+                unsigned char *v = xmalloc(n);
+                if (mincore(m, st.st_size, v) == 0)
+                    for (size_t k = 0; k < n; k++) resident += v[k] & 1;
+                total += n;
+                free(v);
+                munmap(m, st.st_size);
+            }
+        }
+        close(fd);
+    }
+    return total ? (double)resident / total : 1;
+}
+
+/* Write the resident page ranges of the files ("path offset length" per line), merging
+ * ranges less than 1 MiB apart. Returns the bytes covered. */
+static size_t record_working_set(List *files, const char *out) {
+    long page = sysconf(_SC_PAGESIZE);
+    FILE *f = fopen(out, "w");
+    if (!f) return 0;
+    size_t covered = 0;
+    for (int i = 0; i < files->n; i++) {
+        int fd = open(files->v[i], O_RDONLY);
+        if (fd < 0) continue;
+        struct stat st;
+        if (fstat(fd, &st) == 0 && st.st_size > 0) {
+            void *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+            if (m != MAP_FAILED) {
+                size_t n = (st.st_size + page - 1) / page, gap = (1 << 20) / page;
+                unsigned char *v = xmalloc(n);
+                if (mincore(m, st.st_size, v) == 0) {
+                    size_t k = 0;
+                    while (k < n) {
+                        if (!(v[k] & 1)) { k++; continue; }
+                        size_t a = k, b = k, z = k;
+                        while (z < n && z - b <= gap) { if (v[z] & 1) b = z; z++; }
+                        fprintf(f, "%s %zu %zu\n", files->v[i], a * page, (b - a + 1) * page);
+                        covered += (b - a + 1) * page;
+                        k = b + 1;
+                    }
+                }
+                free(v);
+                munmap(m, st.st_size);
+            }
+        }
+        close(fd);
+    }
+    fclose(f);
+    return covered;
+}
+
+/* Ask the kernel to read the recorded working set ahead (asynchronous: it returns at once). */
+static void prefetch_working_set(void) {
+    char p[8300];
+    snprintf(p, sizeof p, "%s/cuda/working-set", root);
+    FILE *f = fopen(p, "r");
+    if (!f) return;
+    char path[8300], last[8300] = "";
+    unsigned long long off, len;
+    int fd = -1;
+    while (fscanf(f, "%8299s %llu %llu", path, &off, &len) == 3) {
+        if (strcmp(path, last)) {
+            if (fd >= 0) close(fd);
+            fd = open(path, O_RDONLY);
+            snprintf(last, sizeof last, "%s", path);
+        }
+        if (fd >= 0) posix_fadvise(fd, (off_t)off, (off_t)len, POSIX_FADV_WILLNEED);
+    }
+    if (fd >= 0) close(fd);
+    fclose(f);
+}
+#endif
+
+/* ------------------------------------------------------------------ check */
+
+/* Run empower itself on a case, quietly (output to log). Returns its exit status. */
+static int run_quiet(char *const args[], const char *log) {
+#ifdef _WIN32
+    (void)log;
+    return run(args);
+#else
+    pid_t pid;
+    int st;
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 1, log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    posix_spawn_file_actions_adddup2(&fa, 1, 2);
+    int rc = posix_spawn(&pid, args[0], &fa, NULL, args, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    if (rc != 0) return -1;
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
+}
+
+/* empower check: solve case14 with each installed backend, and, for cuda, record which
+ * parts of its files a run reads, so later runs read them ahead. */
+static int check_install(const char *self) {
+    if (!*root) die("cannot find the empower install directory");
+    char tmp[8300], log[8400], outarg[8400];
+    snprintf(tmp, sizeof tmp, "%s/.check", root);
+    MKDIR(tmp);
+    snprintf(log, sizeof log, "%s/check.log", tmp);
+    snprintf(outarg, sizeof outarg, "--output=%s/out", tmp);
+    int failed = 0;
+    if (under_root(IPOPT_LIB)) {
+        char *cmd[] = {(char *)self, "case14_ieee", "--device=cpu", outarg, NULL};
+        double t0 = now();
+        int rc = run_quiet(cmd, log);
+        if (rc == 0) printf("  cpu:  case14 solved (%.1f s)\n", now() - t0);
+        else { printf("  cpu:  case14 not solved; see %s\n", log); failed = 1; }
+        fflush(stdout);
+    }
+#ifdef __linux__
+    if (under_root("cuda/bin/empower-cuda")) {
+        List files = {0};
+        cuda_files(&files);
+        double left = evict(&files);
+        char *cmd[] = {(char *)self, "case14_ieee", "--device=cuda", outarg, NULL};
+        snprintf(log, sizeof log, "%s/check-cuda.log", tmp);
+        setenv("EMPOWER_NO_WORKING_SET", "1", 1);
+        double t0 = now();
+        int rc = run_quiet(cmd, log);
+        unsetenv("EMPOWER_NO_WORKING_SET");
+        if (rc == 0) {
+            printf("  cuda: case14 solved (%.1f s)\n", now() - t0);
+            char ws[8300];
+            snprintf(ws, sizeof ws, "%s/cuda/working-set", root);
+            if (left < 0.2) {
+                size_t b = record_working_set(&files, ws);
+                printf("        recorded the %.0f MB of its files a run reads first, which later runs read ahead\n",
+                       b / 1e6);
+            } else {
+                unlink(ws);
+            }
+        } else {
+            printf("  cuda: case14 not solved (no usable GPU here?); see %s\n", log);
+        }
+        fflush(stdout);
+    }
+#endif
+    return failed;
+}
+
 /* empower hsl [LINK|FILE|LIB]: add HSL MA27 to this install, by running the installer for
  * the installed release (which downloads nothing it already has) with the HSL download
  * link, package, or library; without an argument the installer asks for it. */
@@ -1116,6 +1417,7 @@ static int add_hsl(const char *arg) {
 static const char *usage =
     "usage: empower up           update empower to the latest release (same backends)\n"
     "       empower download     download the whole PGLib-OPF v" PGLIB_VERSION " library (typical, api, sad)\n"
+    "       empower check        solve case14 with each installed backend\n"
     "       empower hsl [LINK|FILE|LIB]\n"
     "                            add HSL MA27 to the cpu backend: the download link from\n"
     "                            HSL's email (" MA27_URL "),\n"
@@ -1171,6 +1473,14 @@ int main(int argc, char **argv) {
     if (argc == 2 && (!strcmp(argv[1], "up") || !strcmp(argv[1], "update"))) return self_update();
     if ((argc == 2 || argc == 3) && !strcmp(argv[1], "hsl")) return add_hsl(argc == 3 ? argv[2] : NULL);
     if (argc == 2 && !strcmp(argv[1], "download")) return download_pglib();
+    if (argc == 2 && !strcmp(argv[1], "check")) {
+#ifdef _WIN32
+        const char *self = under_root("bin/empower.exe");
+#else
+        const char *self = under_root("bin/empower");
+#endif
+        return check_install(self ? self : argv[0]);
+    }
     const char *modellib = getenv("EMPOWER_MODEL_LIB"), *ipoptlib = getenv("EMPOWER_IPOPT_LIB"),
                *hsllib = getenv("EMPOWER_HSL_LIB"),
                *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;
@@ -1332,7 +1642,9 @@ int main(int argc, char **argv) {
     C.summary = fopen(path, "w");
     if (!C.summary) die("cannot write %s", path);
     fputs("case,form,termination_status,raw_status,objective,iterations,nvar,ncon,"
-          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt,constraint_violation\n",
+          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt,constraint_violation,"
+          "violation_power_balance,violation_power_flow,violation_branch_flow,"
+          "violation_angle_difference,violation_voltage,violation_generation\n",
           C.summary);
 
     int solved = 0, failed = 0;
@@ -1379,6 +1691,26 @@ int main(int argc, char **argv) {
     heading("Summary");
     kv("written", "%s", path);
     print_table(NCOL, head, "llrrrrrrr", cases.n, cells);
+    /* The violations by group, when the model library reports them. */
+    int ng = 0;
+    for (int i = 0; i < cases.n; i++) ng += res[i].has_groups;
+    if (ng) {
+        const char *gh[NGROUPS + 1] = {"case"};
+        for (int k = 0; k < NGROUPS; k++) gh[k + 1] = group_head[k];
+        char ***gc = xmalloc(cases.n * sizeof *gc);
+        for (int i = 0; i < cases.n; i++) {
+            gc[i] = xmalloc((NGROUPS + 1) * sizeof(char *));
+            gc[i][0] = names[i];
+            for (int k = 0; k < NGROUPS; k++) {
+                char b[32];
+                if (res[i].has_groups) snprintf(b, sizeof b, "%.2e", res[i].vg[k]);
+                else snprintf(b, sizeof b, "-");
+                gc[i][k + 1] = strdup(b);
+            }
+        }
+        printf("  violations by group, max(l - v, v - u, 0) over each group's constraints and bounds:\n");
+        print_table(NGROUPS + 1, gh, "lrrrrrr", cases.n, gc);
+    }
     printf("  %s%d solved%s, %s%d not solved%s, %.1f s in total\n", solved ? GREEN : "", solved, RST,
            failed ? RED : "", failed, RST, now() - t_start);
     printf("  %sIpopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals\n"

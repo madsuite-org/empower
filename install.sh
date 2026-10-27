@@ -159,7 +159,7 @@ main() {
     done
     [ $cpu -eq 1 ] || [ $cuda -eq 1 ] || die "--backends needs cpu, cuda, or both"
     # Sections: empower, then HSL package, Ipopt and HSL for cpu, then cuda, then PATH.
-    nsec=$((2 + 3 * cpu + cuda)); isec=0
+    nsec=$((3 + 3 * cpu + cuda)); isec=0
     sec() { isec=$((isec + 1)); section "[$isec/$nsec] $1"; }
     DIR=$(absolute "$DIR")
     [ -n "${EMPOWER_HSL_LIB:-}" ] && EMPOWER_HSL_LIB=$(absolute "$EMPOWER_HSL_LIB")
@@ -229,7 +229,9 @@ main() {
 
     [ $cuda -eq 1 ] && [ "$plat" != linux-x86_64 ] && die "the cuda backend is available on Linux x86_64 only"
     gpu_note=""
-    if [ $auto_backends -eq 1 ] && [ "$plat" = linux-x86_64 ] && command -v nvidia-smi >/dev/null; then
+    # (Not when installing from a local archive without a local cuda one: a test.)
+    if [ $auto_backends -eq 1 ] && [ "$plat" = linux-x86_64 ] && command -v nvidia-smi >/dev/null &&
+       { [ -z "${EMPOWER_ARCHIVE:-}" ] || [ -n "${EMPOWER_CUDA_ARCHIVE:-}" ]; }; then
         # An NVIDIA GPU whose driver supports CUDA 12.8 or newer: install cuda too.
         gname=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
         gv=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -1)
@@ -368,6 +370,13 @@ main() {
             done
             "$pe/bin/patchelf" "$@" --set-rpath "$DIR/ipopt/lib" "$dest" >>"$work/adapt.log" 2>&1 || return 1
             rm -rf "$pe"
+            # The full library of a Julia package (HSL_jll's libhsl.so) also links MPI
+            # (its MUMPS-based solvers): MPICH from conda-forge into the Ipopt environment.
+            # METIS is there already.
+            if missing_libs "$dest" | grep -q "^libmpi"; then
+                say "installing MPICH from conda-forge for it"
+                mamba install -y -q -p "$DIR/ipopt" -c conda-forge --override-channels mpich >>"$work/adapt.log" 2>&1 || return 1
+            fi
         else
             for need in $(otool -L "$dest" | awk 'NR > 1 {print $1}' | grep -i blastrampoline); do
                 install_name_tool -change "$need" "@rpath/libopenblas.0.dylib" "$dest" >>"$work/adapt.log" 2>&1 || return 1
@@ -680,6 +689,15 @@ main() {
     fi
 
     # --- 5. PATH, the way juliaup does it ------------------------------------------
+    # --- check: solve case14 with each backend; for cuda, also record which parts of its
+    # files a run reads first, which later runs read ahead (fast first runs on a new node).
+    sec "check"
+    if "$DIR/bin/empower" --help 2>&1 | grep -q "empower check"; then
+        "$DIR/bin/empower" check || say "the check did not pass; empower is installed (see above)"
+    else
+        say "skipped (this release has no empower check)"
+    fi
+
     sec "PATH"
     bindir="$DIR/bin"
     if [ "$add_to_path" = yes ]; then

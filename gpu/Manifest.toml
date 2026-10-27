@@ -268,10 +268,10 @@ version = "0.13.0"
     oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [[deps.ExaModelsPower]]
-deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PrecompileTools"]
-git-tree-sha1 = "d6db0e46efb217a7d96db23249368ddd2f16e0ba"
+deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PowerIO", "PrecompileTools"]
+git-tree-sha1 = "3e3f7575dbdc079221d0490b094a5f3a703fef57"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
-version = "0.4.3"
+version = "0.4.4"
 
     [deps.ExaModelsPower.extensions]
     ExaModelsPowerAMDGPUExt = ["AMDGPU", "ExaModels", "KernelAbstractions"]
@@ -377,6 +377,18 @@ deps = ["Dates", "Mmap", "Parsers", "Unicode"]
 git-tree-sha1 = "31e996f0a15c7b280ba9f76636b3ff9e2ae58c9a"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.4"
+
+[[deps.JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
+git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.14.3"
+
+    [deps.JSON3.extensions]
+    JSON3ArrowExt = ["ArrowTypes"]
+
+    [deps.JSON3.weakdeps]
+    ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
 [[deps.JuliaNVTXCallbacks_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -687,6 +699,12 @@ weakdeps = ["REPL"]
     [deps.Pkg.extensions]
     REPLExt = "REPL"
 
+[[deps.PowerIO]]
+deps = ["JSON3", "LazyArtifacts", "Libdl", "Preferences", "SparseArrays"]
+git-tree-sha1 = "fd9f5725586e24bb7bce5a48b0c611fd8a81a17b"
+uuid = "05ed8b54-f668-4096-9d0d-e8c3dd9dc169"
+version = "0.11.6"
+
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
 git-tree-sha1 = "edbeefc7a4889f528644251bdb5fc9ab5348bc2c"
@@ -831,6 +849,12 @@ deps = ["PrecompileTools", "StyledStrings"]
 git-tree-sha1 = "9e3a02d73a8f0a9be04e677dbef758aab40f8bea"
 uuid = "892a3eda-7b42-436c-8928-eab12a02cf0e"
 version = "0.6.1"
+
+[[deps.StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "fd6a55e88450cb4256e49103a5a243f065c7b781"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.11.1"
 
 [[deps.StyledStrings]]
 uuid = "f489334b-da3d-4c2e-b8f0-e476e12c162b"

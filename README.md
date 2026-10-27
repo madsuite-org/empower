@@ -44,6 +44,7 @@ empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--options="NAME=VA
 empower up                     update to the latest release, for the backends installed
 empower hsl [LINK|FILE|LIB]    add HSL MA27: the link from HSL's email, the package, or a library
 empower download               download the whole PGLib-OPF v23.07 library
+empower check                  solve case14 with each installed backend (the installer runs it)
 ```
 
 | Argument | Meaning |
@@ -73,7 +74,7 @@ empower case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options=
   └────────────────────────┴────────────────┴───────────┴──────────┴──────┴───────────┴───────────┴───────────┴────────────┘
 ```
 
-`max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); `solve` is split into `evals` (the model's functions and derivatives) and `solver` (the solver itself, with its linear solver). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
+A second table gives the violations by group (see `violations.csv` below). `max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); `solve` is split into `evals` (the model's functions and derivatives) and `solver` (the solver itself, with its linear solver). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
 
 To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
 
@@ -83,6 +84,7 @@ To update to the latest release, run `empower up` (or `empower update`). It runs
 |---|---|
 | `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
 | `<case>/solution.m` | The solved case, in the layout MATPOWER's `savecase` writes for an OPF result: the input case with `VM`, `VA`, `PG`, `QG`, `VG` updated and the result columns appended, `PF`, `QF`, `PT`, `QT` and the multipliers `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN` (bus), `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN` (gen) and `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX` (branch), in MATPOWER's units. The objective and termination status are in a comment at the top. For `dc`, as in MATPOWER's DC OPF, `VM` is 1 and the reactive columns are 0. Written by ExaModelsPower's `write_matpower_solution`, compiled into the model library. |
+| `<case>/violations.csv` | The largest violation of each group of constraints and bounds at the solution, `max(l - v, v - u, 0)`: power balance, power flow equations, branch flow limits, angle differences, voltage and generation bounds (ExaModelsPower's `opf_violations`). The same numbers are the `violation_*` columns of `summary.csv`, and the end of the run prints them as a second table. |
 | `<case>/ipopt.log` | Full Ipopt output (`madnlp.log`, MadNLP's, with `--device=cuda`). |
 | `system.txt` | The date, OS, CPU, empower version, the Ipopt and HSL libraries used (and where they came from), and the command. |
 
@@ -103,7 +105,7 @@ $env:EMPOWER_HSL = '<download link>'; irm https://raw.githubusercontent.com/mads
 
 To install the `cpu` backend without HSL, press Enter at the prompt, or pass `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows). Ipopt then uses MUMPS, which is not the most efficient linear solver for OPF and whose timings are not appropriate for benchmarking solver performance; `empower` warns about it on each run. Add MA27 at any time with `empower hsl '<download link>'` (or a downloaded package, or an HSL library), which runs the installer for the installed release and downloads nothing else.
 
-If an HSL library is already on the machine (`libhsl` or `libcoinhsl` in `/usr/local/lib`, `/opt/homebrew/lib`, `/usr/lib`, on `LD_LIBRARY_PATH`, or in the `ldconfig` cache), the installer finds it and offers it; Enter accepts it, and `-y` uses it. A library that does not load as it is, such as `libhsl_subset.so` from the `HSL_jll` Julia package (which links Julia's `libblastrampoline`), is installed as a copy adapted to load the Ipopt environment's OpenBLAS.
+If an HSL library is already on the machine (`libhsl` or `libcoinhsl` in `/usr/local/lib`, `/opt/homebrew/lib`, `/usr/lib`, on `LD_LIBRARY_PATH`, or in the `ldconfig` cache), the installer finds it and offers it; Enter accepts it, and `-y` uses it. A library that does not load as it is, such as one from the `HSL_jll` Julia package (which links Julia's `libblastrampoline`), is installed as a copy adapted to load the Ipopt environment's OpenBLAS; for HSL_jll's full `libhsl.so`, which also links MPI, the installer adds MPICH from conda-forge. With HSL_jll 2025.1.19, MA27, MA57 and MA86 work this way; MA97 does not (its first iteration fails, likely a mismatch between that HSL release and the HSL interface conda-forge's Ipopt was built with).
 
 `--hsl` (`EMPOWER_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`EMPOWER_HSL_LIB` on Windows) or to `empower`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
 
@@ -122,6 +124,10 @@ empower case118_ieee --device=cuda
 ```
 
 `--device=cuda` takes the same arguments and writes the same output (`madnlp.log` in place of `ipopt.log`); `--options` are then MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. The `cuda` backend is `empower-cuda12-linux-x86_64.tar.gz`, built with CUDA 12.8, which runs on every driver for CUDA 12.8 or newer, CUDA 13 included. (`tools/build-cuda.sh 13` builds a CUDA 13.0 archive as well, which needs a GPU of compute capability 7.5 or newer to build; once a release carries it, the installer picks it for a CUDA 13 driver and a non-Volta GPU, and `EMPOWER_CUDA=12` or `13` chooses.) It is the solver compiled ahead of time with its Julia runtime, with GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9, 9.0, 10.0 and 12.0 (V100, RTX 20 to 50 series, A100, L40, H100, B200), so they run without compiling; so far it has been tested on 7.0 (Quadro GV100), 7.5 (RTX 2080 Ti), 8.0 (A100), 8.6 (RTX 3080), 8.9 (L40S) and 12.0 (RTX PRO 6000 Blackwell). On another GPU it compiles its kernels when it starts, which makes the first solve slower. On a supported GPU nothing is compiled at run time; the first case of a run is still slower than the next ones, mostly because each precompiled kernel is loaded into the GPU driver on its first use.
+
+It needs about 8 GB of memory: with less, the system keeps re-reading its 2 GB executable and the NVIDIA libraries, and runs are many times slower. On a cluster, request memory with the job (Slurm's default is often 1 GB), for example `salloc --gres=gpu:1 -c 8 --mem=32G`; `empower` warns when its memory limit is below 8 GB. The installer's last step, `empower check`, solves case14 with each backend; for cuda it also records which parts of the files a run reads first, and later runs read those ahead, which makes the first run on a new machine or node (files not yet in memory, perhaps on NFS) faster.
+
+The installer requires an NVIDIA driver for CUDA 12.8 or newer. On an older CUDA 12 driver, `EMPOWER_CUDA=12` skips that check; whether the backend then runs depends on CUDA's minor-version compatibility and has not been tested.
 
 The archive does not contain the NVIDIA libraries it uses (CUDA runtime, cuBLAS, cuSPARSE, cuSOLVER, NVRTC, nvJitLink, cuDSS). The installer downloads them, about 1.7 GB, as the artifacts of the Julia packages that wrap them (`CUDA_Runtime_jll`, `CUDA_Compiler_jll`, `CUDSS_jll`), from the URLs and SHA-256 sums those packages publish, into `~/.empower/cuda-depot`, under NVIDIA's licences.
 

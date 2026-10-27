@@ -79,6 +79,9 @@ function warm_up(form, opts)
     return nothing
 end
 
+# The groups opf_violations reports, in its order.
+const VIOLATION_GROUPS = ("power_balance", "power_flow", "branch_flow", "angle_difference", "voltage", "generation")
+
 const FORMS = Dict("polar" => Polar(), "rect" => Rect(), "dc" => DC())
 
 # The same names the CPU build writes, from MadNLP's status.
@@ -236,12 +239,22 @@ function solve_case(file, form, out, opts, summary)
     for i in eachindex(c)
         viol = max(viol, cl[i] - c[i], c[i] - cu[i])
     end
+    # The largest violation of each group of constraints and bounds (ExaModelsPower), also
+    # written to <case>/violations.csv as the cpu backend's model library writes it.
+    vg = Tuple(opf_violations(model, r.solution))::NTuple{6,Float64}
+    open(joinpath(dir, "violations.csv"), "w") do io
+        println(io, "group,violation")
+        for (k, g) in enumerate(VIOLATION_GROUPS)
+            println(io, g, ",", vg[k])
+        end
+    end
     csv(summary, name)
     println(summary, ",", form, ",", st, ",", r.status, ",", r.objective, ",", r.iter, ",",
             model.meta.nvar, ",", model.meta.ncon, ",", t_build, ",", t_solve, ",", t_cb, ",",
-            t_solve - t_cb, ",", viol)
+            t_solve - t_cb, ",", viol, ",", vg[1], ",", vg[2], ",", vg[3], ",", vg[4], ",",
+            vg[5], ",", vg[6])
     flush(summary)
-    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve, t_cb, viol,
+    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve, t_cb, viol, vg,
             ok = r.status in (MadNLP.SOLVE_SUCCEEDED, MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL))
 end
 
@@ -299,7 +312,9 @@ function run(args::Vector{String})::Cint
     results = []
     open(path, "w") do summary
         println(summary, "case,form,termination_status,raw_status,objective,iterations,nvar,ncon,",
-                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,constraint_violation")
+                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,constraint_violation,",
+                "violation_power_balance,violation_power_flow,violation_branch_flow,",
+                "violation_angle_difference,violation_voltage,violation_generation")
         for (k, f) in enumerate(files)
             heading(string("[", k, "/", length(files), "] ", casename(f)))
             step("case ", f)
@@ -311,7 +326,7 @@ function run(args::Vector{String})::Cint
                 say(stderr, "error: ", f, ": ", sprint(showerror, err))
                 push!(results, (; name = casename(f), st = "not solved (see the error above)",
                                 obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, t_cb = NaN,
-                                viol = NaN, ok = false))
+                                viol = NaN, vg = ntuple(_ -> NaN, 6), ok = false))
             end
         end
     end
@@ -325,6 +340,9 @@ function run(args::Vector{String})::Cint
     heading("Summary")
     kv("written", path)
     print_table(head, "llrrrrrrr", rows)
+    say("  violations by group, max(l - v, v - u, 0) over each group's constraints and bounds:")
+    print_table(["case", "balance", "flow eqs", "branch lim", "angle", "voltage", "gen"], "lrrrrrr",
+                map(r -> vcat([r.name], [isfinite(v) ? Base.Ryu.writeexp(v, 2) : "-" for v in r.vg]), results))
     nok = count(r -> r.ok, results)
     nbad = length(results) - nok
     say("  ", nok > 0 ? sty(:green) : "", nok, " solved", sty(:rst), ", ", nbad > 0 ? sty(:red) : "", nbad,
