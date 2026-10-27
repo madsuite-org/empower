@@ -288,8 +288,11 @@ main() {
     if [ -x "$DIR/bin/empower" ] && [ "$installed" = "$tag" ] && [ -z "${EMPOWER_ARCHIVE:-}" ]; then
         say "$tag is installed"
     else
-        stage="$DIR/.staging"
-        rm -rf "$stage"; mkdir -p "$stage"
+        # A fresh staging directory; leftovers of earlier ones (files that were still open
+        # then) are removed when they can be.
+        rm -rf "$DIR"/.staging-* "$DIR/.staging" 2>/dev/null || true
+        stage="$DIR/.staging-$$"
+        mkdir -p "$stage"
         if [ -n "${EMPOWER_ARCHIVE:-}" ]; then
             say "from $EMPOWER_ARCHIVE"
             cp "$EMPOWER_ARCHIVE" "$stage/archive.tar.gz"
@@ -307,14 +310,22 @@ main() {
         tar xzf "$stage/archive.tar.gz" -C "$stage/new" --strip-components 1 || die "could not unpack the empower archive"
         [ -x "$stage/new/bin/empower" ] || die "the empower archive has no bin/empower"
         # Replace what the archive provides; keep ipopt/, hsl/, cases/, and .mamba/.
+        # The old files are moved aside rather than deleted in place: `empower up` runs
+        # this from bin/empower, and on NFS a file still open cannot be removed from its
+        # directory (it leaves a .nfs file behind), so deleting bin/ would fail.
+        old="$stage/old"
+        mkdir -p "$old"
         for item in "$stage/new"/* "$stage/new"/.[!.]*; do
             [ -e "$item" ] || continue
             name=$(basename "$item")
-            rm -rf "${DIR:?}/${name:?}"
-            mv "$item" "$DIR/$name"
+            if [ -e "$DIR/$name" ] || [ -L "$DIR/$name" ]; then
+                mv "${DIR:?}/${name:?}" "$old/$name" || die "could not move aside $DIR/$name"
+            fi
+            mv "$item" "$DIR/$name" || die "could not install $DIR/$name"
         done
         printf '%s\n' "$tag" > "$DIR/RELEASE"
-        rm -rf "$stage"
+        # What is still open (the empower that runs this update) goes with the next install.
+        rm -rf "$stage" 2>/dev/null || true
         [ -n "$installed" ] && [ "$installed" != "$tag" ] && say "upgraded from $installed"
     fi
     say "$("$DIR/bin/empower" --version) and its compiled model library"
@@ -612,8 +623,8 @@ main() {
         if [ -x "$DIR/cuda/bin/empower-cuda" ] && [ "$ginstalled" = "$tag cuda$cmaj" ] && [ -z "${EMPOWER_CUDA_ARCHIVE:-}" ]; then
             say "$tag is installed"
         else
-            gstage="$DIR/.staging-cuda"
-            rm -rf "$gstage"; mkdir -p "$gstage/new"
+            gstage="$DIR/.staging-cuda-$$"
+            mkdir -p "$gstage/new"
             if [ -n "${EMPOWER_CUDA_ARCHIVE:-}" ]; then
                 say "from $EMPOWER_CUDA_ARCHIVE"
                 cp "$EMPOWER_CUDA_ARCHIVE" "$gstage/archive.tar.gz"
@@ -629,10 +640,12 @@ main() {
             fi
             tar xzf "$gstage/archive.tar.gz" -C "$gstage/new" --strip-components 1 || die "could not unpack the empower-cuda archive"
             [ -x "$gstage/new/bin/empower-cuda" ] || die "the empower-cuda archive has no bin/empower-cuda"
-            rm -rf "$DIR/cuda"
+            if [ -e "$DIR/cuda" ]; then
+                mv "$DIR/cuda" "$gstage/old" || die "could not move aside $DIR/cuda"
+            fi
             mv "$gstage/new" "$DIR/cuda"
             printf '%s\n' "$tag cuda$cmaj" > "$DIR/cuda/RELEASE"
-            rm -rf "$gstage"
+            rm -rf "$gstage" 2>/dev/null || true
         fi
         # The NVIDIA libraries, kept across upgrades in their own depot. CUDA_Driver (a
         # forward-compatibility driver) is not downloaded: empower-cuda uses the system
