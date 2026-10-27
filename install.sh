@@ -689,8 +689,7 @@ main() {
     fi
 
     # --- 5. PATH, the way juliaup does it ------------------------------------------
-    # --- check: solve case14 with each backend; for cuda, also record which parts of its
-    # files a run reads first, which later runs read ahead (fast first runs on a new node).
+    # --- check: solve case14 with each backend.
     sec "check"
     if "$DIR/bin/empower" --help 2>&1 | grep -q "empower check"; then
         "$DIR/bin/empower" check || say "the check did not pass; empower is installed (see above)"

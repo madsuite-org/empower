@@ -9,7 +9,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #define _DARWIN_C_SOURCE
-#define _DEFAULT_SOURCE /* mincore on Linux */
 #endif
 #include <ctype.h>
 #include <errno.h>
@@ -37,7 +36,6 @@
 #define MKDIR(p) _mkdir(p)
 #else
 #include <dlfcn.h>
-#include <sys/mman.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/utsname.h>
@@ -58,7 +56,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.9.2"
+#define VERSION "0.9.3"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -975,10 +973,6 @@ static void write_system(const char *out, const char *ipoptlib, const char *hsll
     fclose(f);
 }
 
-#ifdef __linux__
-static void prefetch_working_set(void);
-#endif
-
 /* ------------------------------------------------------------ memory limit */
 
 #ifdef __linux__
@@ -1046,10 +1040,6 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
                 "keeps re-reading its files, and runs are many times slower. Request more memory,\n"
                 "for example salloc/sbatch --mem=32G.\n\n",
                 BOLD, YELLOW, RST, lim / 1e9);
-    /* Read ahead what a run reads first (recorded by empower check), in large requests,
-     * while empower-cuda starts: on a cold cache (a new node, files on NFS) this replaces
-     * tens of thousands of page faults. */
-    if (!getenv("EMPOWER_NO_WORKING_SET")) prefetch_working_set();
 #endif
     /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
     char depot[16400];
@@ -1176,127 +1166,6 @@ static void print_table(int ncol, const char **head, const char *align, int nrow
 
 /* -------------------------------------------------------------------- hsl */
 
-/* ------------------------------------------------------- working set (cuda) */
-
-#ifdef __linux__
-/* The files a cuda run reads: empower-cuda and the shared libraries it loads. */
-static void cuda_files(List *out) {
-    char dirs[3][8300];
-    snprintf(dirs[0], sizeof dirs[0], "%s/cuda", root);
-    snprintf(dirs[1], sizeof dirs[1], "%s/cuda-depot", root);
-    dirs[2][0] = 0;
-    for (int d = 0; dirs[d][0]; d++) {
-        /* a small explicit-stack walk; the trees are a few levels deep */
-        List stack = {0};
-        push(&stack, dirs[d]);
-        while (stack.n) {
-            char *dir = stack.v[--stack.n];
-            DIR *h = opendir(dir);
-            if (!h) { free(dir); continue; }
-            struct dirent *e;
-            while ((e = readdir(h))) {
-                if (e->d_name[0] == '.') continue;
-                char p[8600];
-                snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-                struct stat st;
-                if (lstat(p, &st) != 0) continue;
-                if (S_ISDIR(st.st_mode)) push(&stack, p);
-                else if (S_ISREG(st.st_mode) && (strstr(e->d_name, ".so") || !strcmp(e->d_name, "empower-cuda")))
-                    push(out, p);
-            }
-            closedir(h);
-            free(dir);
-        }
-        free(stack.v);
-    }
-}
-
-/* Drop the files from the page cache. Returns the fraction of their pages still resident
- * afterwards (1 on file systems that ignore the request, ZFS for one). */
-static double evict(List *files) {
-    long page = sysconf(_SC_PAGESIZE);
-    size_t total = 0, resident = 0;
-    for (int i = 0; i < files->n; i++) {
-        int fd = open(files->v[i], O_RDONLY);
-        if (fd < 0) continue;
-        posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
-        struct stat st;
-        if (fstat(fd, &st) == 0 && st.st_size > 0) {
-            void *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-            if (m != MAP_FAILED) {
-                size_t n = (st.st_size + page - 1) / page;
-                unsigned char *v = xmalloc(n);
-                if (mincore(m, st.st_size, v) == 0)
-                    for (size_t k = 0; k < n; k++) resident += v[k] & 1;
-                total += n;
-                free(v);
-                munmap(m, st.st_size);
-            }
-        }
-        close(fd);
-    }
-    return total ? (double)resident / total : 1;
-}
-
-/* Write the resident page ranges of the files ("path offset length" per line), merging
- * ranges less than 1 MiB apart. Returns the bytes covered. */
-static size_t record_working_set(List *files, const char *out) {
-    long page = sysconf(_SC_PAGESIZE);
-    FILE *f = fopen(out, "w");
-    if (!f) return 0;
-    size_t covered = 0;
-    for (int i = 0; i < files->n; i++) {
-        int fd = open(files->v[i], O_RDONLY);
-        if (fd < 0) continue;
-        struct stat st;
-        if (fstat(fd, &st) == 0 && st.st_size > 0) {
-            void *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-            if (m != MAP_FAILED) {
-                size_t n = (st.st_size + page - 1) / page, gap = (1 << 20) / page;
-                unsigned char *v = xmalloc(n);
-                if (mincore(m, st.st_size, v) == 0) {
-                    size_t k = 0;
-                    while (k < n) {
-                        if (!(v[k] & 1)) { k++; continue; }
-                        size_t a = k, b = k, z = k;
-                        while (z < n && z - b <= gap) { if (v[z] & 1) b = z; z++; }
-                        fprintf(f, "%s %zu %zu\n", files->v[i], a * page, (b - a + 1) * page);
-                        covered += (b - a + 1) * page;
-                        k = b + 1;
-                    }
-                }
-                free(v);
-                munmap(m, st.st_size);
-            }
-        }
-        close(fd);
-    }
-    fclose(f);
-    return covered;
-}
-
-/* Ask the kernel to read the recorded working set ahead (asynchronous: it returns at once). */
-static void prefetch_working_set(void) {
-    char p[8300];
-    snprintf(p, sizeof p, "%s/cuda/working-set", root);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
-    char path[8300], last[8300] = "";
-    unsigned long long off, len;
-    int fd = -1;
-    while (fscanf(f, "%8299s %llu %llu", path, &off, &len) == 3) {
-        if (strcmp(path, last)) {
-            if (fd >= 0) close(fd);
-            fd = open(path, O_RDONLY);
-            snprintf(last, sizeof last, "%s", path);
-        }
-        if (fd >= 0) posix_fadvise(fd, (off_t)off, (off_t)len, POSIX_FADV_WILLNEED);
-    }
-    if (fd >= 0) close(fd);
-    fclose(f);
-}
-#endif
-
 /* ------------------------------------------------------------------ check */
 
 /* Run empower itself on a case, quietly (output to log). Returns its exit status. */
@@ -1319,8 +1188,7 @@ static int run_quiet(char *const args[], const char *log) {
 #endif
 }
 
-/* empower check: solve case14 with each installed backend, and, for cuda, record which
- * parts of its files a run reads, so later runs read them ahead. */
+/* empower check: solve case14 with each installed backend. */
 static int check_install(const char *self) {
     if (!*root) die("cannot find the empower install directory");
     char tmp[8300], log[8400], outarg[8400];
@@ -1339,29 +1207,11 @@ static int check_install(const char *self) {
     }
 #ifdef __linux__
     if (under_root("cuda/bin/empower-cuda")) {
-        List files = {0};
-        cuda_files(&files);
-        double left = evict(&files);
         char *cmd[] = {(char *)self, "case14_ieee", "--device=cuda", outarg, NULL};
         snprintf(log, sizeof log, "%s/check-cuda.log", tmp);
-        setenv("EMPOWER_NO_WORKING_SET", "1", 1);
         double t0 = now();
-        int rc = run_quiet(cmd, log);
-        unsetenv("EMPOWER_NO_WORKING_SET");
-        if (rc == 0) {
-            printf("  cuda: case14 solved (%.1f s)\n", now() - t0);
-            char ws[8300];
-            snprintf(ws, sizeof ws, "%s/cuda/working-set", root);
-            if (left < 0.2) {
-                size_t b = record_working_set(&files, ws);
-                printf("        recorded the %.0f MB of its files a run reads first, which later runs read ahead\n",
-                       b / 1e6);
-            } else {
-                unlink(ws);
-            }
-        } else {
-            printf("  cuda: case14 not solved (no usable GPU here?); see %s\n", log);
-        }
+        if (run_quiet(cmd, log) == 0) printf("  cuda: case14 solved (%.1f s)\n", now() - t0);
+        else printf("  cuda: case14 not solved (no usable GPU here?); see %s\n", log);
         fflush(stdout);
     }
 #endif

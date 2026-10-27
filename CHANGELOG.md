@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.3
+
+- The first cases of a cuda run are as fast as later ones: after its warm-up, `empower-cuda` runs one full garbage collection (about 0.2 s). Until the first full collection, every young collection also marked the objects of the executable's image, about 0.17 s each.
+- `empower check` no longer records the parts of the cuda files a run reads first, and runs no longer read them ahead: measured on a cluster node with the files on NFS, it did not shorten a first run (`empower-cuda` reads its whole image when it starts).
+- `EMPOWER_GC_PROBE=1` times young and full garbage collections after startup.
+
 ## v0.9.2
 
 - The constraint and bound violations by group: power balance, power flow equations, branch flow limits, angle differences, voltage and generation bounds (ExaModelsPower 0.4.4's `opf_violations`, compiled into the model library as its `violations` writer). Each case writes `<case>/violations.csv`, `summary.csv` has a `violation_*` column per group, and the end of the run prints them as a second table.

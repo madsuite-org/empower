@@ -190,6 +190,19 @@ function profiled(f, k)
     return r
 end
 
+# EMPOWER_GC_PROBE=1: time young collections with little to collect, a full one, and young
+# ones again, to tell a fixed per-collection cost from one that follows the garbage.
+function gc_probe()
+    for (label, full) in (("young", false), ("young", false), ("full", true), ("young", false), ("young", false))
+        g0 = Base.gc_num()
+        t = @elapsed GC.gc(full)
+        g1 = Base.gc_num()
+        say("  gc probe: ", label, " ", fixed3(t), " s (mark ", fixed3((g1.total_mark_time - g0.total_mark_time) / 1e9),
+            " s, sweep ", fixed3((g1.total_sweep_time - g0.total_sweep_time) / 1e9), " s), live ",
+            Base.gc_live_bytes() >> 20, " MiB")
+    end
+end
+
 # EMPOWER_TRACE_COMPILE=1 also reports each case's garbage collection and compile time.
 function measured(f)
     trace = get(ENV, "EMPOWER_TRACE_COMPILE", "") == "1"
@@ -305,8 +318,14 @@ function run(args::Vector{String})::Cint
     kv("kernels", nk, " loaded, and the cuBLAS, cuSPARSE and cuDSS handles (", fixed3(t_pre), " s)")
     if get(ENV, "EMPOWER_NO_WARMUP", "") != "1"
         t_warm = @elapsed warm_up(form, opts)
-        kv("warm-up", "case14 solved once (", fixed3(t_warm), " s)")
+        # One full collection now: until the first one, every young collection marks the
+        # objects of the executable's image as well (about 0.17 s each); after it, young
+        # collections cost almost nothing, so the first cases are as fast as later ones.
+        t_gc = @elapsed GC.gc(true)
+        kv("warm-up", "case14 solved once (", fixed3(t_warm), " s), then a full garbage collection (",
+           fixed3(t_gc), " s)")
     end
+    get(ENV, "EMPOWER_GC_PROBE", "") == "1" && gc_probe()
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
