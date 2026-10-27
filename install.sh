@@ -298,6 +298,53 @@ main() {
     fi
     say "$("$DIR/bin/empower" --version) and its compiled model library"
 
+    # find_hsl: an HSL library already on this machine, in the places the dynamic
+    # loader and package managers put them; prints the first one found.
+    find_hsl() {
+        for n in libhsl libcoinhsl; do
+            for d in /usr/local/lib /usr/local/lib64 /opt/homebrew/lib /usr/lib /usr/lib64 \
+                     $(printf '%s' "${LD_LIBRARY_PATH:-}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" | tr ':' ' '); do
+                [ -f "$d/$n.$ext" ] && { printf '%s\n' "$d/$n.$ext"; return 0; }
+            done
+            if [ "$os" = Linux ] && command -v ldconfig >/dev/null; then
+                p=$(ldconfig -p 2>/dev/null | awk -v n="$n.so" '$1 == n {print $NF; exit}')
+                [ -n "$p" ] && [ -f "$p" ] && { printf '%s\n' "$p"; return 0; }
+            fi
+        done
+        return 1
+    }
+    # missing_libs LIB: the shared libraries LIB needs that the loader cannot find.
+    missing_libs() {
+        if [ "$os" = Linux ]; then
+            ldd "$1" 2>/dev/null | awk '/not found/ {print $1}'
+        else
+            otool -L "$1" 2>/dev/null | awk 'NR > 1 {print $1}' | grep -i blastrampoline
+        fi
+    }
+    # adapt_hsl_lib SRC DEST: a copy of SRC that loads its BLAS from the Ipopt
+    # environment's OpenBLAS (in place of Julia's libblastrampoline) and finds the
+    # environment's libraries (gfortran, OpenMP, METIS when it has them).
+    adapt_hsl_lib() {
+        src=$1; dest=$2
+        cp -L "$src" "$dest" && chmod u+w "$dest" || return 1
+        if [ "$os" = Linux ]; then
+            pe="$work/patchelf"
+            mamba create -y -q -p "$pe" -c conda-forge --override-channels patchelf >"$work/adapt.log" 2>&1 || return 1
+            set --
+            for need in $("$pe/bin/patchelf" --print-needed "$dest"); do
+                case "$need" in libblastrampoline.so*) set -- "$@" --replace-needed "$need" libopenblas.so.0 ;; esac
+            done
+            "$pe/bin/patchelf" "$@" --set-rpath "$DIR/ipopt/lib" "$dest" >>"$work/adapt.log" 2>&1 || return 1
+            rm -rf "$pe"
+        else
+            for need in $(otool -L "$dest" | awk 'NR > 1 {print $1}' | grep -i blastrampoline); do
+                install_name_tool -change "$need" "@rpath/libopenblas.0.dylib" "$dest" >>"$work/adapt.log" 2>&1 || return 1
+            done
+            install_name_tool -add_rpath "$DIR/ipopt/lib" "$dest" >>"$work/adapt.log" 2>&1 || return 1
+            codesign -f -s - "$dest" >>"$work/adapt.log" 2>&1 || return 1
+        fi
+    }
+
     # compile_hsl FC TOOLS_BIN: build the extracted package in $top into $hsl.
     compile_hsl() {
         cfc=$1; tbin=$2
@@ -337,6 +384,23 @@ main() {
             hsl_mode=keep; say "already installed"
         elif [ "${EMPOWER_SKIP_HSL:-}" = 1 ]; then
             hsl_mode=skip; say "skipped (--no-hsl)"; no_hsl_warning
+        elif found=$(find_hsl) && [ -n "$found" ]; then
+            # An HSL library already on this machine (HSL's libHSL in /usr/local/lib,
+            # Coin-HSL, ...): offered first, and used as is with -y.
+            say "found an HSL library: $found"
+            link=$found
+            if [ $have_tty -eq 1 ] && [ $yes -eq 0 ]; then
+                link=$(ask 'press Enter to use it, or paste a download link, another path, or "skip":' "$found")
+            fi
+            case "$link" in
+                skip | Skip | SKIP) hsl_mode=skip; say "skipped"; no_hsl_warning ;;
+                http://* | https://*) hsl_mode=build; hsl_src=$link ;;
+                *) link=$(absolute "$link")
+                   case "$link" in
+                       *.so | *.so.* | *.dylib) hsl_mode=lib; hsl_lib=$link ;;
+                       *) hsl_mode=build; hsl_src=$link ;;
+                   esac ;;
+            esac
         else
             say "empower needs HSL MA27, which you download yourself under HSL's free personal licence:"
             say "  1. request it at $MA27_URL (about 2 minutes)"
@@ -446,11 +510,24 @@ main() {
             lib)
                 sec "HSL MA27"
                 [ -f "$hsl_lib" ] || die "HSL library not found: $hsl_lib"
-                ln -sf "$hsl_lib" "$hsl"
-                echo "your library $hsl_lib" > "$DIR/hsl/SOURCE"
-                check_hsl || die "Ipopt cannot use MA27 from $hsl_lib; see $work/check.log"
-                rm -rf "$work"
-                say "your library $hsl_lib (MA27 checked)" ;;
+                rm -f "$hsl"
+                ln -s "$hsl_lib" "$hsl"
+                if check_hsl; then
+                    echo "your library $hsl_lib" > "$DIR/hsl/SOURCE"
+                    say "your library $hsl_lib (MA27 checked)"
+                else
+                    # It does not load as it is: libraries from a Julia package (HSL_jll)
+                    # link Julia's BLAS forwarder libblastrampoline, and others may expect
+                    # a BLAS found elsewhere. Use a copy that loads the Ipopt environment's
+                    # OpenBLAS and libraries instead.
+                    say "your library does not load as it is ($(missing_libs "$hsl_lib" | tr '\n' ' ')); adapting a copy"
+                    rm -f "$hsl"
+                    adapt_hsl_lib "$hsl_lib" "$hsl" || die "could not adapt $hsl_lib; see $work/adapt.log"
+                    check_hsl || die "Ipopt cannot use MA27 from $hsl_lib (adapted copy in $hsl; see $work/check.log). Missing: $(missing_libs "$hsl" | tr '\n' ' ')"
+                    echo "your library $hsl_lib, adapted to use the Ipopt environment's OpenBLAS" > "$DIR/hsl/SOURCE"
+                    say "your library $hsl_lib, adapted (MA27 checked)"
+                fi
+                rm -rf "$work" ;;
             build)
                 sec "HSL MA27"
                 wait "$build_pid" 2>/dev/null || true

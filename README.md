@@ -87,6 +87,8 @@ $env:EMPOWER_HSL = '<download link>'; irm https://raw.githubusercontent.com/mads
 
 To install the `cpu` backend without HSL, press Enter at the prompt, or pass `--no-hsl` (`EMPOWER_SKIP_HSL=1` on Windows). Ipopt then uses MUMPS, which is not the most efficient linear solver for OPF and whose timings are not appropriate for benchmarking solver performance; `empower` warns about it on each run. Add MA27 at any time with `empower hsl '<download link>'` (or a downloaded package, or an HSL library), which runs the installer for the installed release and downloads nothing else.
 
+If an HSL library is already on the machine (`libhsl` or `libcoinhsl` in `/usr/local/lib`, `/opt/homebrew/lib`, `/usr/lib`, on `LD_LIBRARY_PATH`, or in the `ldconfig` cache), the installer finds it and offers it; Enter accepts it, and `-y` uses it. A library that does not load as it is, such as `libhsl_subset.so` from the `HSL_jll` Julia package (which links Julia's `libblastrampoline`), is installed as a copy adapted to load the Ipopt environment's OpenBLAS.
+
 `--hsl` (`EMPOWER_HSL`) also accepts the downloaded `.tar.gz` or `.zip`, and a Coin-HSL or Coin-HSL Archive package, which is built with meson (Linux and macOS). To use an HSL library you already have instead (for example `libcoinhsl` or the one from HSL_jll), pass `--hsl-lib=/path/to/libhsl.so` to the installer (`EMPOWER_HSL_LIB` on Windows) or to `empower`. With a library that has them, `--options=linear_solver=ma57` (or `ma86`, `ma97`) selects another HSL solver.
 
 ## Backends

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.9.0 (in progress)
+
+- An HSL library already on the machine is used: the installer looks in `/usr/local/lib`, `/usr/local/lib64`, `/opt/homebrew/lib`, `/usr/lib`, `/usr/lib64`, `LD_LIBRARY_PATH` and the `ldconfig` cache for `libhsl` or `libcoinhsl` and offers it (Enter accepts it; `-y` uses it), and `empower` itself, with no HSL installed or given, uses one from the standard library directories when Ipopt can load MA27 from it.
+- An HSL library that does not load as it is, such as one from a Julia package (`HSL_jll`, which links Julia's `libblastrampoline`), is installed as an adapted copy that loads the Ipopt environment's OpenBLAS (`patchelf` on Linux, `install_name_tool` on macOS). Checked with `HSL_jll` 2025.1.19's `libhsl_subset.so`: MA27, MA57 and MA86 solve.
+
 ## v0.8.0
 
 - Without HSL, the cpu backend runs Ipopt with MUMPS instead of refusing to run, and warns, on install and on each run, that MUMPS is not the most efficient linear solver for OPF and not appropriate for benchmarking solver performance. Pressing Enter at the installer's HSL prompt skips HSL, as does a `-y` install with no HSL link.

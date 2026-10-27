@@ -465,6 +465,32 @@ static const char *termination_status(int s) {
 #define MAXOPTS 512
 static char *opts[MAXOPTS];
 static int no_hsl = 0;   /* MUMPS because no HSL library is installed */
+static int hsl_system = 0;   /* the HSL library was found on this machine, not installed */
+
+/* An HSL library in a standard location (HSL's libHSL, Coin-HSL), for when none is
+ * installed or given: the first that exists. */
+static const char *system_hsl(void) {
+#if defined(_WIN32)
+    return NULL;
+#else
+#ifdef __APPLE__
+    static const char *dirs[] = {"/usr/local/lib", "/opt/homebrew/lib", NULL};
+    const char *ext = "dylib";
+#else
+    static const char *dirs[] = {"/usr/local/lib", "/usr/local/lib64", "/usr/lib", "/usr/lib64",
+                                 "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", NULL};
+    const char *ext = "so";
+#endif
+    static char path[1024];
+    const char *names[] = {"libhsl", "libcoinhsl"};
+    for (int k = 0; k < 2; k++)
+        for (int d = 0; dirs[d]; d++) {
+            snprintf(path, sizeof path, "%s/%s.%s", dirs[d], names[k], ext);
+            if (access(path, R_OK) == 0) return path;
+        }
+    return NULL;
+#endif
+}
 static int nopts = 0;
 
 static void add_opt(const char *name, const char *value) {
@@ -1079,7 +1105,8 @@ static const char *usage =
     "  --output     output directory (default ./empower-results)\n"
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
-    "               $EMPOWER_HSL_LIB. MA27 is the linear solver unless --options sets\n"
+    "               $EMPOWER_HSL_LIB, or libhsl/libcoinhsl in /usr/local/lib and other\n"
+    "               standard library directories. MA27 is the linear solver unless --options sets\n"
     "               linear_solver; without HSL it is MUMPS, which is slower for OPF\n"
     "               and not for benchmarking (empower hsl adds MA27)\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
@@ -1164,6 +1191,7 @@ int main(int argc, char **argv) {
             "(or pass --ipopt-lib, or set EMPOWER_IPOPT_LIB)");
     if (hsllib && !*hsllib) hsllib = NULL;
     if (!hsllib) hsllib = under_root(HSL_LIB);
+    if (!hsllib && (hsllib = system_hsl()) != NULL) hsl_system = 1;
     if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);
     C.hsllib = hsllib;
 
@@ -1172,7 +1200,7 @@ int main(int argc, char **argv) {
     kv("model", "%s", modellib);
     kv("ipopt", "%s", ipoptlib);
     if (read_source("ipopt", src, sizeof src)) kv("", "%s", src);
-    kv("hsl", "%s", hsllib ? hsllib : "(none)");
+    kv("hsl", "%s%s", hsllib ? hsllib : "(none)", hsl_system ? " (found on this machine)" : "");
     if (hsllib && read_source("hsl", src, sizeof src)) kv("", "%s", src);
     kv("output", "%s", out);
     for (int k = 0; k < nopts; k++) kv("option", "%s", opts[k]);
@@ -1248,8 +1276,13 @@ int main(int argc, char **argv) {
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
     if (!C.linear_solver) {
         if (probe_ma27(&C.I, C.hsllib)) C.linear_solver = "ma27";
-        else if (C.hsllib) die("MA27 could not be loaded from %s", C.hsllib);
+        else if (C.hsllib && !hsl_system) die("MA27 could not be loaded from %s", C.hsllib);
         else {
+            if (hsl_system)
+                fprintf(stderr, "\n%s%snote:%s found %s, but Ipopt cannot load MA27 from it as it is\n"
+                        "(it may need libraries such as Julia's libblastrampoline); `empower hsl %s`\n"
+                        "installs an adapted copy.\n", BOLD, YELLOW, RST, C.hsllib, C.hsllib);
+            C.hsllib = NULL;
             fprintf(stderr, "\n%s%swarning:%s %s\n", BOLD, YELLOW, RST, NO_HSL_WARNING + 9);
             C.linear_solver = "mumps";
             no_hsl = 1;
