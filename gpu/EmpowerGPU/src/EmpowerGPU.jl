@@ -33,22 +33,50 @@ const PRECOMPILED = Tuple{CUDACore.CUDACompilerResults,CUDACore.SMVersion}[]
 function preload(dev)
     sm = CUDACore.compiler_config(dev).params.sm
     ctx = CUDACore.context()
-    n = 0
+    todo = CUDACore.CUDACompilerResults[]
+    for (res, s) in PRECOMPILED
+        s == sm && !any(k -> k[1] === ctx, res.kernels) && push!(todo, res)
+    end
+    # Spread over the threads: the driver loads modules concurrently.
+    nt = max(Threads.nthreads(), 1)
+    chunks = [collect(c) for c in Iterators.partition(todo, max(cld(length(todo), nt), 1))]
+    # At least one task, even with nothing to load: the build's precompile workload, which
+    # has no kernels recorded yet, then compiles the same task as a real start does.
+    isempty(chunks) && push!(chunks, CUDACore.CUDACompilerResults[])
     GC.enable(false)
     try
-        for (res, s) in PRECOMPILED
-            s == sm || continue
-            any(k -> k[1] === ctx, res.kernels) && continue
-            fun = CUDACore.link_kernel(res.image::Vector{UInt8}, res.entry::String, res.relocations)
-            push!(res.kernels, (ctx, fun))
-            n += 1
+        tasks = map(chunks) do chunk
+            Threads.@spawn begin
+                CUDACore.context!(ctx)
+                for res in chunk
+                    fun = CUDACore.link_kernel(res.image::Vector{UInt8}, res.entry::String, res.relocations)
+                    push!(res.kernels, (ctx, fun))
+                end
+            end
         end
+        foreach(wait, tasks)
     finally
         GC.enable(true)
     end
     GC.gc(false)
     cuBLAS.handle(); cuSPARSE.handle(); CUDSS.handle()
-    return n
+    return length(todo)
+end
+
+const WARMUP_CASE = read(joinpath(pkgdir(ExaModelsPower), "data", "pglib_opf_case14_ieee.m"), String)
+
+function warm_up(form, opts)
+    f = tempname() * ".m"
+    write(f, WARMUP_CASE)
+    try
+        model, _, _ = opf_model(f; form = FORMS[form], backend = CUDABackend())
+        o = filter(p -> !(first(p) in (:print_level, :output_file)), opts)
+        madnlp(model; o..., print_level = MadNLP.ERROR)
+    finally
+        rm(f; force = true)
+    end
+    CUDACore.synchronize()
+    return nothing
 end
 
 const FORMS = Dict("polar" => Polar(), "rect" => Rect(), "dc" => DC())
@@ -159,6 +187,24 @@ function profiled(f, k)
     return r
 end
 
+# EMPOWER_TRACE_COMPILE=1 also reports each case's garbage collection and compile time.
+function measured(f)
+    trace = get(ENV, "EMPOWER_TRACE_COMPILE", "") == "1"
+    trace && Base.cumulative_compile_timing(true)
+    g0 = Base.gc_num(); c0 = Base.cumulative_compile_time_ns()
+    r = f()
+    if trace
+        d = Base.GC_Diff(Base.gc_num(), g0); c1 = Base.cumulative_compile_time_ns()
+        g1 = Base.gc_num()
+        say("  gc ", fixed3(d.total_time / 1e9), " s in ", d.pause, " pauses (", d.full_sweep,
+            " full): mark ", fixed3((g1.total_mark_time - g0.total_mark_time) / 1e9),
+            " s, sweep ", fixed3((g1.total_sweep_time - g0.total_sweep_time) / 1e9),
+            " s, waiting for threads ", fixed3((g1.total_time_to_safepoint - g0.total_time_to_safepoint) / 1e9),
+            " s; compile ", fixed3((c1[1] - c0[1]) / 1e9), " s")
+    end
+    return r
+end
+
 function solve_case(file, form, out, opts, summary)
     name = casename(file)
     dir = mkpath(joinpath(out, name))
@@ -211,6 +257,8 @@ end
 # The app: solve each case and write the results; the exit code.
 function run(args::Vector{String})::Cint
     init_style()
+    # EMPOWER_GC_LOG=1: Julia's log of each garbage collection (kind, duration, heap).
+    get(ENV, "EMPOWER_GC_LOG", "") == "1" && GC.enable_logging(true)
     # Ctrl-C exits (empower, which runs this, kills it as well).
     Base.exit_on_sigint(true)
     # Warnings and errors only: the packages' @info messages ("Loading matpower file") are
@@ -242,6 +290,10 @@ function run(args::Vector{String})::Cint
     kv("gpu", CUDACore.name(dev), " (context ", fixed3(t_gpu), " s)")
     t_pre = @elapsed (nk = preload(dev))
     kv("kernels", nk, " loaded, and the cuBLAS, cuSPARSE and cuDSS handles (", fixed3(t_pre), " s)")
+    if get(ENV, "EMPOWER_NO_WARMUP", "") != "1"
+        t_warm = @elapsed warm_up(form, opts)
+        kv("warm-up", "case14 solved once (", fixed3(t_warm), " s)")
+    end
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
@@ -252,7 +304,7 @@ function run(args::Vector{String})::Cint
             heading(string("[", k, "/", length(files), "] ", casename(f)))
             step("case ", f)
             try
-                push!(results, profiled(() -> solve_case(f, form, out, opts, summary), k))
+                push!(results, measured(() -> profiled(() -> solve_case(f, form, out, opts, summary), k)))
             catch err
                 # Ctrl-C ends the run; it is not this case's error.
                 err isa InterruptException && rethrow()

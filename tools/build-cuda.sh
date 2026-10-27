@@ -67,7 +67,7 @@ export JULIA_IMAGE_THREADS
 echo "juliac: $JULIA_IMAGE_THREADS threads"
 julia --startup-file=no --project=gpu/juliac -e 'using JuliaC; JuliaC.main(ARGS)' -- \
     --project="$env" --output-exe empower-cuda --bundle "$stage/empower-cuda" \
-    --trim=no --experimental "$env/main.jl"
+    --trim=no --experimental --jl-option threads=4 "$env/main.jl"
 
 # The launcher must run on glibc 2.28.
 newest=$("$toolchain/env/bin/x86_64-conda-linux-gnu-objdump" -T "$stage/empower-cuda/bin/empower-cuda" |
