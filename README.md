@@ -1,8 +1,8 @@
 # empower
 
-Solve AC and DC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time, and Ipopt. No Julia installation is needed. (empower was called opfsolve before v0.6.0.)
+Solve AC and DC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time: with Ipopt on the CPU, or with MadNLP and cuDSS on an NVIDIA GPU (see [Backends](#backends)). No Julia installation is needed. (empower was called opfsolve before v0.6.0.)
 
-empower uses the HSL MA27 linear solver, which you download yourself under HSL's free personal licence: first request it at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ (about 2 minutes). HSL emails a download link, valid for 7 days, which the installer asks for; press Enter to skip it for now and add it later with `empower hsl` (see [HSL MA27](#hsl-ma27)).
+On the CPU, empower uses the HSL MA27 linear solver, which you download yourself under HSL's free personal licence: request it at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ (about 2 minutes), and HSL emails a download link, valid for 7 days, which the installer asks for. An HSL library already on the machine is found and offered instead. Press Enter to skip HSL for now; Ipopt then uses MUMPS, and `empower hsl` adds MA27 later (see [HSL MA27](#hsl-ma27)).
 
 Linux and macOS (Apple silicon):
 
@@ -20,7 +20,8 @@ The installer works like juliaup's. It shows the install directory, asks for con
 
 - `bin/empower` and the compiled ExaModelsPower model library for your platform,
 - Ipopt 3.14 from [conda-forge](https://anaconda.org/conda-forge/ipopt), installed with [micromamba](https://github.com/mamba-org/micromamba-releases),
-- HSL MA27, compiled with `-O3` on your machine from your own licensed copy.
+- HSL MA27: compiled with `-O3` on your machine from your own licensed copy, or an HSL library you already have,
+- with `--backends=cpu,cuda`, the GPU solver and the NVIDIA libraries it uses (see [Backends](#backends)).
 
 It then puts `~/.empower/bin` on `PATH`: in a marked `# >>> empower initialize >>>` block in `~/.bashrc`, `~/.bash_profile` or `~/.profile`, and `~/.zshrc` (zsh and macOS), and in the user `PATH` on Windows, where it also applies to the current PowerShell session. In a new terminal, run:
 
@@ -39,25 +40,40 @@ Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install d
 ## Usage
 
 ```
-empower <case>... [--form=polar|rect|dc] [--solver=ipopt] [--options="NAME=VALUE ..."] [--output=DIR]
+empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--options="NAME=VALUE ..."] [--output=DIR]
+empower up                     update to the latest release, for the backends installed
+empower hsl [LINK|FILE|LIB]    add HSL MA27: the link from HSL's email, the package, or a library
+empower download               download the whole PGLib-OPF v23.07 library
 ```
 
 | Argument | Meaning |
 |---|---|
 | `<case>` | A MATPOWER file, or a PGLib-OPF case name (`case118_ieee`, `pglib_opf_case118_ieee.m`), downloaded from PGLib-OPF v23.07 into `~/.empower/cases` on first use. Several cases can be given; `all` solves every PGLib-OPF case for typical operating conditions. `empower download` downloads the whole library (typical, `api` and `sad` cases) at once. |
 | `--form` | Formulation: `polar` (default) or `rect` for AC OPF, or `dc` for DC OPF. |
-| `--device` | `cpu` (default): Ipopt with HSL MA27. `gpu`: MadNLP with cuDSS on an NVIDIA GPU (see [GPU](#gpu)). |
+| `--device` | `cpu`: Ipopt with HSL MA27 (MUMPS without HSL). `cuda`: MadNLP with cuDSS on an NVIDIA GPU (see [Backends](#backends)). Default: `cpu` if it is installed, else `cuda`. |
 | `--solver` | `ipopt` on the CPU, `madnlp` on the GPU (the defaults, and the only solvers in this release). |
-| `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. The linear solver is `ma27`; with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. |
+| `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. On the CPU the linear solver is `ma27` (`mumps` without HSL); with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. On the GPU they are MadNLP options. |
 | `--output` | Output directory (default `./empower-results`). |
-| `--hsl-lib` | HSL library to use (default `~/.empower/hsl`, or `EMPOWER_HSL_LIB`). |
+| `--hsl-lib` | HSL library to use (default `~/.empower/hsl`, or `EMPOWER_HSL_LIB`, or `libhsl`/`libcoinhsl` in `/usr/local/lib` and the other standard library directories). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
 ```sh
 empower case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options="tol=1e-8"
 ```
 
-`empower` prints each step with its elapsed time (downloading, parsing the case and building the model, solving, writing the output), Ipopt's own output for each solve (`--options=print_level=N` sets how much), and a summary table at the end.
+`empower` prints each step with its elapsed time (downloading, parsing the case and building the model, solving, writing the output) under a heading per case, the solver's own output for each solve (`--options=print_level=N` sets how much), and a summary table at the end:
+
+```
+── Summary ───────────────────────────────────────────────────────────────────
+  written  empower-results/summary.csv
+  ┌────────────────────────┬────────────────┬───────────┬──────────┬──────┬───────────┬───────────┬───────────┬────────────┐
+  │ case                   │ status         │ objective │ max viol │ iter │ build (s) │ solve (s) │ evals (s) │ solver (s) │
+  ├────────────────────────┼────────────────┼───────────┼──────────┼──────┼───────────┼───────────┼───────────┼────────────┤
+  │ pglib_opf_case118_ieee │ LOCALLY_SOLVED │ 97213.607 │ 9.83e-09 │   29 │     0.001 │     0.260 │     0.004 │      0.256 │
+  └────────────────────────┴────────────────┴───────────┴──────────┴──────┴───────────┴───────────┴───────────┴────────────┘
+```
+
+`max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); `solve` is split into `evals` (the model's functions and derivatives) and `solver` (the solver itself, with its linear solver). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
 
 To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
 
@@ -67,12 +83,12 @@ To update to the latest release, run `empower up` (or `empower update`). It runs
 |---|---|
 | `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
 | `<case>/solution.m` | The solved case, in the layout MATPOWER's `savecase` writes for an OPF result: the input case with `VM`, `VA`, `PG`, `QG`, `VG` updated and the result columns appended, `PF`, `QF`, `PT`, `QT` and the multipliers `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN` (bus), `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN` (gen) and `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX` (branch), in MATPOWER's units. The objective and termination status are in a comment at the top. For `dc`, as in MATPOWER's DC OPF, `VM` is 1 and the reactive columns are 0. Written by ExaModelsPower's `write_matpower_solution`, compiled into the model library. |
-| `<case>/ipopt.log` | Full Ipopt output. |
+| `<case>/ipopt.log` | Full Ipopt output (`madnlp.log`, MadNLP's, with `--device=cuda`). |
 | `system.txt` | The date, OS, CPU, empower version, the Ipopt and HSL libraries used (and where they came from), and the command. |
 
 ## HSL (MA27)
 
-empower requires MA27. Its licence is free for personal use, but `empower` never distributes it, so each user downloads it:
+On the CPU, empower uses MA27. Its licence is free for personal use, but `empower` never distributes it, so each user downloads it (or uses an HSL library they already have, below):
 
 1. Request the free personal licence for MA27 at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/. HSL emails a download link, valid for 7 days.
 2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`EMPOWER_HSL` on Windows). The installer downloads the package and compiles MA27 with `-O3` into `~/.empower/hsl/`. It uses your `gfortran` if you have one (or the compiler in `EMPOWER_FC`); otherwise it downloads gfortran from conda-forge. The compiler download and the compile run in the background while Ipopt installs, and the compiler is removed afterwards. Either way it checks that Ipopt can use the result:
@@ -105,7 +121,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite
 empower case118_ieee --device=cuda
 ```
 
-`--device=cuda` takes the same arguments and writes the same output (`madnlp.log` in place of `ipopt.log`); `--options` are then MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. The `cuda` backend is `empower-cuda12-linux-x86_64.tar.gz`, built with CUDA 12.8, which runs on every driver for CUDA 12.8 or newer, CUDA 13 included. (`tools/build-cuda.sh 13` builds a CUDA 13.0 archive as well, which needs a GPU of compute capability 7.5 or newer to build; once a release carries it, the installer picks it for a CUDA 13 driver and a non-Volta GPU, and `EMPOWER_CUDA=12` or `13` chooses.) It is the solver compiled ahead of time with its Julia runtime, with GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9, 9.0, 10.0 and 12.0 (V100, RTX 20 to 50 series, A100, L40, H100, B200), so they run without compiling; so far it has been tested on 7.0 (Quadro GV100), 7.5 (RTX 2080 Ti) and 8.6 (RTX 3080). On another GPU it compiles its kernels when it starts, which makes the first solve slower.
+`--device=cuda` takes the same arguments and writes the same output (`madnlp.log` in place of `ipopt.log`); `--options` are then MadNLP options, for example `--options="tol=1e-6 max_iter=1000"`. The `cuda` backend is `empower-cuda12-linux-x86_64.tar.gz`, built with CUDA 12.8, which runs on every driver for CUDA 12.8 or newer, CUDA 13 included. (`tools/build-cuda.sh 13` builds a CUDA 13.0 archive as well, which needs a GPU of compute capability 7.5 or newer to build; once a release carries it, the installer picks it for a CUDA 13 driver and a non-Volta GPU, and `EMPOWER_CUDA=12` or `13` chooses.) It is the solver compiled ahead of time with its Julia runtime, with GPU kernels compiled for compute capabilities 7.0, 7.5, 8.0, 8.6, 8.9, 9.0, 10.0 and 12.0 (V100, RTX 20 to 50 series, A100, L40, H100, B200), so they run without compiling; so far it has been tested on 7.0 (Quadro GV100), 7.5 (RTX 2080 Ti), 8.0 (A100), 8.6 (RTX 3080), 8.9 (L40S) and 12.0 (RTX PRO 6000 Blackwell). On another GPU it compiles its kernels when it starts, which makes the first solve slower. On a supported GPU nothing is compiled at run time; the first case of a run is still slower than the next ones, mostly because each precompiled kernel is loaded into the GPU driver on its first use.
 
 The archive does not contain the NVIDIA libraries it uses (CUDA runtime, cuBLAS, cuSPARSE, cuSOLVER, NVRTC, nvJitLink, cuDSS). The installer downloads them, about 1.7 GB, as the artifacts of the Julia packages that wrap them (`CUDA_Runtime_jll`, `CUDA_Compiler_jll`, `CUDSS_jll`), from the URLs and SHA-256 sums those packages publish, into `~/.empower/cuda-depot`, under NVIDIA's licences.
 
@@ -123,8 +139,9 @@ No system packages are needed: conda-forge supplies Ipopt's Fortran runtime and 
 
 - `emp/lib/libemp.so` (`emp/lib/libemp.dylib` on macOS, `emp/bin/libemp.dll` on Windows) holds the ExaModelsPower recipes `acp` (polar), `acr` (rectangular) and `dcp` (DC), with ExaModelsPower's MATPOWER writer, compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/empower` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
+- `cuda/bin/empower-cuda` (the `cuda` backend) is `gpu/EmpowerGPU`, which builds the ExaModelsPower model on the GPU and solves it with MadNLP and cuDSS, compiled by `juliac` with its Julia runtime; `bin/empower --device=cuda` runs it. `tools/build-cuda.sh 12` builds it on a machine with an NVIDIA GPU, and `tools/test-cuda.sh 12` installs it and checks the solutions, and that a run, on a file and on a terminal, compiles nothing.
 
-`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with each formulation. The `Release` workflow builds and tests every platform on each push. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` falls back to MUMPS with its warning without HSL; the HSL build is tested by hand.
+`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with each formulation. The `Release` workflow builds and tests every platform on each push, the `cuda` archive on a self-hosted runner with an NVIDIA GPU. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` falls back to MUMPS with its warning without HSL; the HSL build is tested by hand.
 
 ## License
 
