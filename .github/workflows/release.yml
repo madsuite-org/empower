@@ -32,7 +32,7 @@ jobs:
     # AlmaLinux 8 (glibc 2.28), so the binary also runs on RHEL 8 and newer distributions.
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Julia
         run: |
           curl --proto '=https' --tlsv1.2 -fsSL https://install.julialang.org | sh -s -- --yes --default-channel "$JULIA_VERSION"
@@ -64,7 +64,7 @@ jobs:
             runner: macos-14
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         with:
           version: ${{ env.JULIA_VERSION }}
@@ -86,7 +86,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         with:
           version: ${{ env.JULIA_VERSION }}
@@ -117,7 +117,7 @@ jobs:
     runs-on: [self-hosted, gpu, cuda, shin-compute]
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # v3: the self-hosted runners run actions on Node 24.
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         with:
@@ -144,7 +144,7 @@ jobs:
     runs-on: [self-hosted, gpu, cuda, shin-compute]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: empower-linux-x86_64
@@ -163,7 +163,7 @@ jobs:
       id-token: write        # sign the build provenance
       attestations: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The tag matches the version empower reports
         run: |
           v=$(sed -n 's/^#define VERSION "\(.*\)"$/\1/p' driver/empower.c)
