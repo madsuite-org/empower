@@ -21,7 +21,7 @@ The installer works like juliaup's. It shows the install directory, asks for con
 - `bin/empower` and the compiled ExaModelsPower model library for your platform,
 - Ipopt 3.14 from [conda-forge](https://anaconda.org/conda-forge/ipopt), installed with [micromamba](https://github.com/mamba-org/micromamba-releases),
 - HSL MA27: compiled with `-O3` on your machine from your own licensed copy, or an HSL library you already have,
-- with `--backends=cpu,cuda`, the GPU solver and the NVIDIA libraries it uses (see [Backends](#backends)).
+- on Linux with an NVIDIA GPU (or with `--backends=cpu,cuda`), the GPU solver and the NVIDIA libraries it uses (see [Backends](#backends)).
 
 It then puts `~/.empower/bin` on `PATH`: in a marked `# >>> empower initialize >>>` block in `~/.bashrc`, `~/.bash_profile` or `~/.profile`, and `~/.zshrc` (zsh and macOS), and in the user `PATH` on Windows, where it also applies to the current PowerShell session. In a new terminal, run:
 
@@ -109,7 +109,7 @@ If an HSL library is already on the machine (`libhsl` or `libcoinhsl` in `/usr/l
 
 ## Backends
 
-The installer's `--backends` selects the solvers to install, comma-separated (default `cpu`); `empower --device` selects one at run time (default `cpu` if it is installed, else `cuda`).
+The installer's `--backends` selects the solvers to install, comma-separated. Without it, the installer installs `cpu`, and `cuda` as well on Linux x86_64 when `nvidia-smi` finds an NVIDIA GPU whose driver supports CUDA 12.8 or newer; it says so before installing, and `--backends=cpu` keeps to the CPU. `empower --device` selects one at run time (default `cpu` if it is installed, else `cuda`).
 
 | Backend | Solver | Platforms |
 |---|---|---|

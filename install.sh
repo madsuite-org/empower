@@ -29,7 +29,9 @@ Options:
   -y, --yes                accept the defaults without asking
   -p, --path DIR           install directory (default ~/.empower)
       --add-to-path yes|no add DIR/bin to PATH in shell startup files (default yes)
-      --backends LIST      the solvers to install, comma-separated (default cpu):
+      --backends LIST      the solvers to install, comma-separated (default cpu, and
+                           cuda as well on Linux x86_64 with an NVIDIA GPU whose
+                           driver supports CUDA 12.8 or newer):
                              cpu  Ipopt with HSL MA27 (empower --device=cpu)
                              cuda MadNLP with cuDSS on an NVIDIA GPU (empower
                                   --device=cuda; Linux x86_64, NVIDIA driver for CUDA
@@ -142,6 +144,9 @@ main() {
         shift
     done
     case "$add_to_path" in yes | 1) add_to_path=yes ;; no | 0) add_to_path=no ;; *) die "--add-to-path takes yes or no" ;; esac
+    # Without --backends: cpu, and cuda as well where an NVIDIA GPU can run it (below).
+    auto_backends=0
+    [ -n "${EMPOWER_BACKENDS:-}" ] || auto_backends=1
     backends=${EMPOWER_BACKENDS:-cpu}
     cpu=0; cuda=0
     for b in $(echo "$backends" | tr ',' ' '); do
@@ -223,12 +228,28 @@ main() {
     fi
 
     [ $cuda -eq 1 ] && [ "$plat" != linux-x86_64 ] && die "the cuda backend is available on Linux x86_64 only"
+    gpu_note=""
+    if [ $auto_backends -eq 1 ] && [ "$plat" = linux-x86_64 ] && command -v nvidia-smi >/dev/null; then
+        # An NVIDIA GPU whose driver supports CUDA 12.8 or newer: install cuda too.
+        gname=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+        gv=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -1)
+        gmaj=${gv%%.*}; gmin=${gv#*.}; gmin=${gmin%%.*}
+        if [ -n "$gname" ] && [ -n "$gv" ]; then
+            if [ "$gmaj" -ge 13 ] 2>/dev/null || { [ "$gmaj" -eq 12 ] && [ "$gmin" -ge 8 ]; } 2>/dev/null; then
+                cuda=1; backends="cpu,cuda"; nsec=$((nsec + 1))
+                gpu_note="(cuda: found $gname, NVIDIA driver for CUDA $gv; --backends=cpu installs the cpu backend only)"
+            else
+                gpu_note="(found $gname, but its NVIDIA driver supports CUDA $gv; the cuda backend needs 12.8 or newer)"
+            fi
+        fi
+    fi
     printf '%sempower installer%s\n' "$B" "$R"
     say "platform:      $plat"
     say "release:       $tag"
     say "install into:  $DIR"
     say "add to PATH:   $add_to_path ($DIR/bin, in the shell startup files)"
     say "backends:      $(echo "$backends" | sed 's/,/, /g')"
+    [ -n "$gpu_note" ] && say "               $gpu_note"
     [ $cuda -eq 1 ] && say "               (cuda: and its NVIDIA libraries, about 1.7 GB)"
     if [ $yes -eq 0 ]; then
         [ $have_tty -eq 1 ] || die "unable to ask for confirmation; run with -y to accept the defaults (--help for options)"
