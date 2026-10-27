@@ -1,7 +1,9 @@
 # Changelog
 
-## v0.9.0 (in progress)
+## v0.9.0
 
+- The first case of a cuda run is as fast as the next ones: `empower-cuda` loads its GPU's precompiled kernels into the driver, and creates the cuBLAS, cuSPARSE and cuDSS handles, when it starts (shown as `kernels`), instead of on first use. Loading them one by one during the first case cost about a second, mostly in garbage collections set off by CUDA.jl allocating a 1 MiB error-log buffer for each kernel; at startup they load with garbage collection paused. On an RTX 3080, case14 took 0.59 s to build and 0.79 s to solve as the first case of a run, and now about 0.02 s and 0.13 s, against 0.01 s and 0.10 s as the second.
+- `EMPOWER_PROFILE=FILE` profiles the first case of a cuda run and writes where the time went to FILE.
 - Ctrl-C stops a cuda run at once: `empower` kills `empower-cuda`, which kept solving (and printing) after `empower` had exited.
 - Without `--backends`, the installer installs the cuda backend as well on Linux x86_64 when `nvidia-smi` finds an NVIDIA GPU whose driver supports CUDA 12.8 or newer, and says so before installing.
 - An HSL library already on the machine is used: the installer looks in `/usr/local/lib`, `/usr/local/lib64`, `/opt/homebrew/lib`, `/usr/lib`, `/usr/lib64`, `LD_LIBRARY_PATH` and the `ldconfig` cache for `libhsl` or `libcoinhsl` and offers it (Enter accepts it; `-y` uses it), and `empower` itself, with no HSL installed or given, uses one from the standard library directories when Ipopt can load MA27 from it.

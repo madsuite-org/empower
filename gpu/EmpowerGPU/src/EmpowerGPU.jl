@@ -13,6 +13,7 @@ using ExaModelsPower, MadNLP, MadNLPGPU, CUDACore, cuBLAS, cuSPARSE, cuSOLVER, C
 # building and evaluation on the GPU, loads with it.
 import CUDA
 import GPUCompiler
+import Profile
 using PrecompileTools: @compile_workload
 const CUDABackend = CUDACore.CUDAKernels.CUDABackend
 
@@ -20,6 +21,35 @@ const CUDABackend = CUDACore.CUDAKernels.CUDABackend
 # puts them in the executable. Evaluated in a module that binds every loaded module by
 # name, since several statements refer to modules this file does not import.
 
+
+# The compiled GPU kernels of every architecture, with the architecture each is for;
+# main.jl fills it when the executable is built.
+const PRECOMPILED = Tuple{CUDACore.CUDACompilerResults,CUDACore.SMVersion}[]
+
+# Load this GPU's compiled kernels into its context now, and create the library handles,
+# so the first case runs as fast as the next ones. Each load allocates CUDA.jl's 1 MiB
+# error-log buffer, which the driver only writes on failure; with garbage collection off
+# those cost nothing, and one young collection frees them afterwards.
+function preload(dev)
+    sm = CUDACore.compiler_config(dev).params.sm
+    ctx = CUDACore.context()
+    n = 0
+    GC.enable(false)
+    try
+        for (res, s) in PRECOMPILED
+            s == sm || continue
+            any(k -> k[1] === ctx, res.kernels) && continue
+            fun = CUDACore.link_kernel(res.image::Vector{UInt8}, res.entry::String, res.relocations)
+            push!(res.kernels, (ctx, fun))
+            n += 1
+        end
+    finally
+        GC.enable(true)
+    end
+    GC.gc(false)
+    cuBLAS.handle(); cuSPARSE.handle(); CUDSS.handle()
+    return n
+end
 
 const FORMS = Dict("polar" => Polar(), "rect" => Rect(), "dc" => DC())
 
@@ -113,6 +143,22 @@ function csv(io, v)
     occursin(r"[,\"\r\n]", s) ? print(io, '"', replace(s, "\"" => "\"\""), '"') : print(io, s)
 end
 
+# EMPOWER_PROFILE=FILE: sample the first case's model build and solve with Julia's
+# profiler and write where the time went to FILE, to find what a first call costs.
+function profiled(f, k)
+    path = get(ENV, "EMPOWER_PROFILE", "")
+    (isempty(path) || k != 1) && return f()
+    Profile.init(n = 10^7, delay = 0.0005)
+    r = Profile.@profile f()
+    open(path, "w") do io
+        Profile.print(IOContext(io, :displaysize => (1000, 300)); format = :flat, sortedby = :count, mincount = 10)
+        println(io, "\n\n==== tree ====\n")
+        Profile.print(IOContext(io, :displaysize => (1000, 300)); mincount = 20, maxdepth = 60, noisefloor = 2)
+    end
+    say("  profile written to ", path)
+    return r
+end
+
 function solve_case(file, form, out, opts, summary)
     name = casename(file)
     dir = mkpath(joinpath(out, name))
@@ -165,6 +211,8 @@ end
 # The app: solve each case and write the results; the exit code.
 function run(args::Vector{String})::Cint
     init_style()
+    # Ctrl-C exits (empower, which runs this, kills it as well).
+    Base.exit_on_sigint(true)
     # Warnings and errors only: the packages' @info messages ("Loading matpower file") are
     # noise between empower's own lines.
     Base.CoreLogging.global_logger(Base.CoreLogging.SimpleLogger(stderr, Base.CoreLogging.Warn))
@@ -192,6 +240,8 @@ function run(args::Vector{String})::Cint
     haskey(FORMS, form) || (say(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
     t_gpu = @elapsed (dev = CUDACore.device(); CUDACore.synchronize())
     kv("gpu", CUDACore.name(dev), " (context ", fixed3(t_gpu), " s)")
+    t_pre = @elapsed (nk = preload(dev))
+    kv("kernels", nk, " loaded, and the cuBLAS, cuSPARSE and cuDSS handles (", fixed3(t_pre), " s)")
     mkpath(out)
     path = joinpath(out, "summary.csv")
     results = []
@@ -202,8 +252,10 @@ function run(args::Vector{String})::Cint
             heading(string("[", k, "/", length(files), "] ", casename(f)))
             step("case ", f)
             try
-                push!(results, solve_case(f, form, out, opts, summary))
+                push!(results, profiled(() -> solve_case(f, form, out, opts, summary), k))
             catch err
+                # Ctrl-C ends the run; it is not this case's error.
+                err isa InterruptException && rethrow()
                 say(stderr, "error: ", f, ": ", sprint(showerror, err))
                 push!(results, (; name = casename(f), st = "not solved (see the error above)",
                                 obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, t_cb = NaN,

@@ -49,6 +49,31 @@ function compiled_kernels()
 end
 const CUDACoreResults = CUDACore.CUDACompilerResults
 
+# Every compiled image in the loaded package images, with the architecture it is for,
+# so that the executable can load the ones for its GPU when it starts.
+function compiled_results()
+    out = Tuple{CUDACoreResults,CUDACore.SMVersion}[]
+    seen = IdDict{Any,Nothing}()
+    for (mi, cfg, ci) in compiled_kernels()
+        chain = CompilerCaching.read_analysis_results(ci)
+        while chain isa Core.Compiler.AnalysisResults
+            r = chain.result
+            r isa CompilerCaching.CachedResult && (r = getfield(r, 1))
+            if r isa GPUCompiler.PersistentJobResults
+                for e in r.entries
+                    v = e.value
+                    if v isa CUDACoreResults && v.image !== nothing && !haskey(seen, v)
+                        seen[v] = nothing
+                        push!(out, (v, e.config.params.sm))
+                    end
+                end
+            end
+            chain = isdefined(chain, :next) ? chain.next : nothing
+        end
+    end
+    return out
+end
+
 # Compile every kernel already compiled for the current device for each capability in
 # `caps` as well, with the configuration CUDA.jl builds on such a device, so a GPU of that
 # capability finds its cubin in the cache instead of compiling at run time.

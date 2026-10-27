@@ -189,7 +189,7 @@ uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 version = "1.7.0"
 
 [[deps.EmpowerGPU]]
-deps = ["CUDA", "CUDACore", "CUDSS", "ExaModelsPower", "GPUCompiler", "MadNLP", "MadNLPGPU", "PrecompileTools", "cuBLAS", "cuSOLVER", "cuSPARSE"]
+deps = ["CUDA", "CUDACore", "CUDSS", "ExaModelsPower", "GPUCompiler", "MadNLP", "MadNLPGPU", "PrecompileTools", "Profile", "cuBLAS", "cuSOLVER", "cuSPARSE"]
 path = "EmpowerGPU"
 uuid = "6a4f1e2c-8d3b-4f7a-9c21-3e5b7d9f0a41"
 version = "0.1.0"
@@ -718,6 +718,11 @@ version = "3.5.0"
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+version = "1.11.0"
+
+[[deps.Profile]]
+deps = ["StyledStrings"]
+uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 version = "1.11.0"
 
 [[deps.REPL]]

@@ -20,4 +20,9 @@ module PrecompileStatements
     end
 end
 
+# The compiled kernels of every architecture, recorded in the executable so that it loads
+# those for its GPU when it starts rather than one by one on first use.
+append!(EmpowerGPU.PRECOMPILED, EmpowerKernels70.compiled_results())
+println(stderr, "kernels recorded for loading at startup: ", length(EmpowerGPU.PRECOMPILED))
+
 (@main)(args::Vector{String})::Cint = EmpowerGPU.main(args)
