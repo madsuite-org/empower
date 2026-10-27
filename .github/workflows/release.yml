@@ -104,6 +104,8 @@ jobs:
 
   # The cuda backend compiles its kernels on a GPU, so it is built on our self-hosted
   # GPU runners; it installs with the x86_64 archive from build-linux.
+  # The cuda build does not wait for the cpu builds; only its test, which installs the
+  # cpu archive (the empower driver) next to it, does.
   build-cuda:
     name: cuda${{ matrix.cuda }}-linux-x86_64
     strategy:
@@ -112,7 +114,6 @@ jobs:
         # CUDA 13 too once a runner has a GPU it supports (compute capability 7.5 or
         # newer); these runners' GV100s are Volta, which CUDA 13 dropped.
         cuda: [12]
-    needs: build-linux
     runs-on: [self-hosted, gpu, cuda, shin-compute]
     timeout-minutes: 150
     steps:
@@ -121,25 +122,41 @@ jobs:
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
         with:
           version: ${{ env.JULIA_VERSION }}
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          name: empower-linux-x86_64
       - name: Build
         # One depot for every runner on the machine, kept between runs: each runner's own
         # depot starts cold, and a cold depot precompiles everything (about 10 minutes).
         env:
           JULIA_DEPOT_PATH: "/home/action-runner/depots/empower-cuda${{ matrix.cuda }}:"
         run: tools/build-cuda.sh ${{ matrix.cuda }}
-      - name: Test
-        run: tools/test-cuda.sh ${{ matrix.cuda }}
+      # Uploaded before it is tested, so a build whose test fails can still be examined.
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: empower-cuda${{ matrix.cuda }}-linux-x86_64
           path: empower-cuda${{ matrix.cuda }}-linux-x86_64.tar.gz
 
+  test-cuda:
+    name: test cuda${{ matrix.cuda }}-linux-x86_64
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [12]
+    needs: [build-linux, build-cuda]
+    runs-on: [self-hosted, gpu, cuda, shin-compute]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: empower-linux-x86_64
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: empower-cuda${{ matrix.cuda }}-linux-x86_64
+      - name: Test
+        run: tools/test-cuda.sh ${{ matrix.cuda }}
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-macos, build-windows, build-cuda]
+    needs: [build-linux, build-macos, build-windows, build-cuda, test-cuda]
     runs-on: ubuntu-24.04
     permissions:
       contents: write        # create the release
