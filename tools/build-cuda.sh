@@ -45,9 +45,7 @@ printf '[CUDA_Compiler_jll]\nversion = "%s"\n\n[CUDA_Runtime_jll]\nversion = "%s
 # which puts GPUCompiler's device runtime into its package image; juliac cannot link that
 # into an executable (undefined julia.gpu.state_getter). empower-cuda uses only the CUDA
 # back-end, whose kernels its own workloads precompile.
-# ExaModelsPower's KernelAbstractions extension precompiles on KernelAbstractions.CPU(),
-# which in 0.10 is that same POCL back-end; its CUDA paths are precompiled by EmpowerGPU.
-printf '\n[KernelAbstractions]\nprecompile_workload = false\n\n[ExaModelsPower]\nprecompile_workload = false\n' >> "$env/LocalPreferences.toml"
+printf '\n[KernelAbstractions]\nprecompile_workload = false\n' >> "$env/LocalPreferences.toml"
 
 julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
@@ -66,7 +64,39 @@ if [ ! -x "$cc" ]; then
     MAMBA_ROOT_PREFIX="$toolchain/root" "$toolchain/micromamba" create -y -q -p "$toolchain/env" \
         -c conda-forge --override-channels gcc_linux-64 "sysroot_linux-64=2.28"
 fi
-export JULIA_CC="$cc"
+# KernelAbstractions 0.10's CPU back-end is POCL, and the packages that precompile on it
+# (ExaModelsPower's KernelAbstractions extension) put GPUCompiler's device runtime for it
+# into their package images. juliac compiles that code into the executable, where the
+# device intrinsics it calls do not exist. empower-cuda never runs it (only the CUDA
+# back-end), so the link gets definitions that trap if they are ever called.
+stubs="$toolchain/device-stubs.o"
+cat > "$toolchain/device-stubs.s" <<'STUBS'
+    .text
+    .globl "julia.gpu.state_getter"
+    .type "julia.gpu.state_getter", @function
+"julia.gpu.state_getter":
+    ud2
+    .globl "julia.opencl.random_keys"
+    .type "julia.opencl.random_keys", @function
+"julia.opencl.random_keys":
+    ud2
+    .globl "julia.opencl.random_counters"
+    .type "julia.opencl.random_counters", @function
+"julia.opencl.random_counters":
+    ud2
+    .section .note.GNU-stack,"",@progbits
+STUBS
+"$cc" -c "$toolchain/device-stubs.s" -o "$stubs"
+cat > "$toolchain/cc-link" <<WRAP
+#!/bin/sh
+# The C compiler juliac uses; the link of the executable gets the device stubs.
+for a in "\$@"; do
+    case "\$a" in *.o.a) exec "$cc" "\$@" "$stubs" ;; esac
+done
+exec "$cc" "\$@"
+WRAP
+chmod +x "$toolchain/cc-link"
+export JULIA_CC="$toolchain/cc-link"
 # juliac generates the executable's code on JULIA_IMAGE_THREADS threads; leave headroom for
 # others on a shared machine.
 JULIA_IMAGE_THREADS=${JULIA_IMAGE_THREADS:-$(n=$(($(nproc) / 2)); [ "$n" -gt 32 ] && n=32; [ "$n" -lt 1 ] && n=1; echo $n)}
