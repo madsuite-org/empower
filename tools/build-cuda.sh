@@ -45,7 +45,9 @@ printf '[CUDA_Compiler_jll]\nversion = "%s"\n\n[CUDA_Runtime_jll]\nversion = "%s
 # which puts GPUCompiler's device runtime into its package image; juliac cannot link that
 # into an executable (undefined julia.gpu.state_getter). empower-cuda uses only the CUDA
 # back-end, whose kernels its own workloads precompile.
-printf '\n[KernelAbstractions]\nprecompile_workload = false\n' >> "$env/LocalPreferences.toml"
+# ExaModelsPower's KernelAbstractions extension precompiles on KernelAbstractions.CPU(),
+# which in 0.10 is that same POCL back-end; its CUDA paths are precompiled by EmpowerGPU.
+printf '\n[KernelAbstractions]\nprecompile_workload = false\n\n[ExaModelsPower]\nprecompile_workload = false\n' >> "$env/LocalPreferences.toml"
 
 julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
