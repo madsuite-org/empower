@@ -39,8 +39,13 @@ cp -r gpu/Project.toml gpu/Manifest.toml gpu/main.jl gpu/precompile_statements.j
 # Julia applies a project's preferences only to the packages it lists, so the runtime and
 # compiler packages join as extras; each reads its own preference namespace first, so
 # both are set (the compiler's otherwise follows a global preference, if one exists).
-printf '\n[extras]\nCUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"\nCUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"\n' >> "$env/Project.toml"
+printf '\n[extras]\nCUDA_Compiler_jll = "d1e2174e-dfdc-576e-b43e-73b79eb1aca8"\nCUDA_Runtime_jll = "76a88914-d11a-5bdc-97e0-2f5a05c973a2"\nKernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"\n' >> "$env/Project.toml"
 printf '[CUDA_Compiler_jll]\nversion = "%s"\n\n[CUDA_Runtime_jll]\nversion = "%s"\n' "$runtime" "$runtime" > "$env/LocalPreferences.toml"
+# KernelAbstractions 0.10 launches a kernel on its POCL (CPU) back-end while it precompiles,
+# which puts GPUCompiler's device runtime into its package image; juliac cannot link that
+# into an executable (undefined julia.gpu.state_getter). empower-cuda uses only the CUDA
+# back-end, whose kernels its own workloads precompile.
+printf '\n[KernelAbstractions]\nprecompile_workload = false\n' >> "$env/LocalPreferences.toml"
 
 julia --startup-file=no --project="$env" -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --startup-file=no --project=gpu/juliac -e 'using Pkg; Pkg.instantiate()'
