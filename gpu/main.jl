@@ -20,6 +20,17 @@ module PrecompileStatements
     end
 end
 
+# CUDA.jl keys its launched kernels by (objectid, hash, function) and compares those keys
+# with isequal, specialized on the kernel function's type: precompile it for every GPU
+# kernel function (KernelAbstractions names them gpu_*) of the loaded modules.
+for m in Base.loaded_modules_array(), n in names(m; all = true)
+    startswith(string(n), "gpu_") && isdefined(m, n) || continue
+    f = getfield(m, n)
+    f isa Function || continue
+    K = Tuple{UInt64,UInt64,typeof(f)}
+    precompile(isequal, (K, K))
+end
+
 # The compiled kernels of every architecture, recorded in the executable so that it loads
 # those for its GPU when it starts rather than one by one on first use.
 append!(EmpowerGPU.PRECOMPILED, EmpowerKernels70.compiled_results())

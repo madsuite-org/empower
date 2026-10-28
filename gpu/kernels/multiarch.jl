@@ -96,7 +96,10 @@ function compile_for(caps)
             cfg2 = retarget(cfg, cap)
             cfg2 == cfg && continue
             res = try
-                CUDACore.compile_or_lookup(GPUCompiler.CompilerJob(mi, cfg2, ci.min_world))
+                # CUDA.jl expects its compile lock held (it releases it while ptxas runs).
+                lock(CUDACore.cufunction_lock) do
+                    CUDACore.compile_or_lookup(GPUCompiler.CompilerJob(mi, cfg2, ci.min_world))
+                end
             catch err
                 k == 1 && occursin("is not defined for option 'gpu-name'", sprint(showerror, err)) || rethrow()
                 println("skipping compute capability ", cap, ": this CUDA's ptxas does not support it")

@@ -68,9 +68,9 @@ version = "1.7.0"
 
 [[deps.ExaModels]]
 deps = ["Adapt", "NLPModels", "Printf", "SolverCore"]
-git-tree-sha1 = "5e6f66ecd23fc9d2a351e3ea26a1cbb0a59ec031"
+git-tree-sha1 = "700954a6ea65550b5442f92192ecbfe604ea4eed"
 uuid = "1037b233-b668-4ce9-9b63-f9f681f55dd2"
-version = "0.13.0"
+version = "0.13.1"
 
     [deps.ExaModels.extensions]
     ExaModelsJuMP = "JuMP"
@@ -99,9 +99,9 @@ version = "0.1.2"
 
 [[deps.ExaModelsPower]]
 deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PowerIO", "PrecompileTools"]
-git-tree-sha1 = "3e3f7575dbdc079221d0490b094a5f3a703fef57"
+git-tree-sha1 = "aa50a3495531364ebcb323948c585531515b5329"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
-version = "0.4.4"
+version = "0.4.5"
 
     [deps.ExaModelsPower.extensions]
     ExaModelsPowerAMDGPUExt = ["AMDGPU", "ExaModels", "KernelAbstractions"]
@@ -121,9 +121,9 @@ version = "0.4.4"
 
 [[deps.ExaPowerIO]]
 deps = ["LazyArtifacts"]
-git-tree-sha1 = "4ed6f1bf93563d80083b44c7c694a8313008d24a"
+git-tree-sha1 = "89ec64ca60908db98a6dd3aff0ea2fd172da6979"
 uuid = "14903efe-9500-4d7f-a589-7ab7e15da6de"
-version = "0.3.2"
+version = "0.3.4"
 
 [[deps.ExprTools]]
 git-tree-sha1 = "d2e49e7efd29719d6f28b891b0e0e159daa9d2b4"
@@ -316,9 +316,9 @@ version = "2.4.5"
 
 [[deps.Parsers]]
 deps = ["Dates", "PrecompileTools", "UUIDs"]
-git-tree-sha1 = "ba0dc8a8a67cacac4842631f960c046e4e563675"
+git-tree-sha1 = "e24b87585a307a3c3225cb9b64d03802a1e01edd"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-version = "2.8.8"
+version = "2.8.10"
 
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "Random", "SHA", "TOML", "Tar", "UUIDs", "p7zip_jll"]

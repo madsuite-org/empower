@@ -23,5 +23,5 @@ cuSPARSE = "b26da814-b3bc-49ef-b0ee-c816305aa060"
 
 [sources]
 EmpowerGPU = {path = "EmpowerGPU"}
-MadNLP = {rev = "483c70f8f8f9c54cf95c5d1059ac6a5628413066", url = "https://github.com/madsuite-org/MadNLP.jl.git"}
-MadNLPGPU = {rev = "483c70f8f8f9c54cf95c5d1059ac6a5628413066", subdir = "lib/MadNLPGPU", url = "https://github.com/madsuite-org/MadNLP.jl.git"}
+MadNLP = {rev = "dd950f00", url = "https://github.com/madsuite-org/MadNLP.jl.git"}
+MadNLPGPU = {rev = "dd950f00", subdir = "lib/MadNLPGPU", url = "https://github.com/madsuite-org/MadNLP.jl.git"}
