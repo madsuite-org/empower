@@ -2,6 +2,7 @@
 
 ## v0.10.0
 
+- The summary table: init and linear algebra times (`init`, `lin alg`; also in summary.csv), and no "(s)" in the headers.
 - A C API, `libempower` (`include/empower.h`), usable from C and C++, and a Python package (`python/`, `import empower`): solve a case on the cpu or the GPU and get the solution back in memory.
 
 ## v0.9.5

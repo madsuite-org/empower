@@ -72,14 +72,14 @@ empower case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options=
 ```
 ── Summary ───────────────────────────────────────────────────────────────────
   written  empower-results/summary.csv
-  ┌────────────────────────┬────────────────┬───────────┬──────────┬──────┬───────────┬───────────┬───────────┬────────────┐
-  │ case                   │ status         │ objective │ max viol │ iter │ build (s) │ solve (s) │ evals (s) │ solver (s) │
-  ├────────────────────────┼────────────────┼───────────┼──────────┼──────┼───────────┼───────────┼───────────┼────────────┤
-  │ pglib_opf_case118_ieee │ LOCALLY_SOLVED │ 97213.607 │ 9.83e-09 │   29 │     0.001 │     0.260 │     0.004 │      0.256 │
-  └────────────────────────┴────────────────┴───────────┴──────────┴──────┴───────────┴───────────┴───────────┴────────────┘
+  ┌────────────────────────┬────────────────┬───────────┬──────────┬──────┬───────┬───────┬───────┬───────┬─────────┬───────┐
+  │ case                   │ status         │ objective │ max viol │ iter │ build │  init │ solve │ evals │ lin alg │ other │
+  ├────────────────────────┼────────────────┼───────────┼──────────┼──────┼───────┼───────┼───────┼───────┼─────────┼───────┤
+  │ pglib_opf_case118_ieee │ LOCALLY_SOLVED │ 97213.607 │ 9.83e-09 │   29 │ 0.024 │ 0.005 │ 0.069 │ 0.006 │   0.042 │ 0.021 │
+  └────────────────────────┴────────────────┴───────────┴──────────┴──────┴───────┴───────┴───────┴───────┴─────────┴───────┘
 ```
 
-A second table gives the violations by group (see `violations.csv` below). `max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); `solve` is split into `evals` (the model's functions and derivatives) and `solver` (the solver itself, with its linear solver). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
+A second table gives the violations by group (see `violations.csv` below). `max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); Times are in seconds: `build` parses the case and builds the model; `solve` is split into `evals` (the model's functions and derivatives), `lin alg` (the linear solver: MA27 or MUMPS, from Ipopt's timing statistics; cuDSS on the GPU) and `other` (the rest of the solver); `init`, part of `solve`, is the time to the first iteration (MadNLP's initialization on the GPU). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
 
 To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
 
@@ -115,7 +115,7 @@ r.status, r.objective, r.bus["vm"], r.gen["pg"], r.branch["pf"]   # numpy arrays
 
 | File | Contents |
 |---|---|
-| `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
+| `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver, and the solver's initialization and linear algebra), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
 | `<case>/solution.m` | The solved case, in the layout MATPOWER's `savecase` writes for an OPF result: the input case with `VM`, `VA`, `PG`, `QG`, `VG` updated and the result columns appended, `PF`, `QF`, `PT`, `QT` and the multipliers `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN` (bus), `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN` (gen) and `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX` (branch), in MATPOWER's units. The objective and termination status are in a comment at the top. For `dc`, as in MATPOWER's DC OPF, `VM` is 1 and the reactive columns are 0. Written by ExaModelsPower's `write_matpower_solution`, compiled into the model library. |
 | `<case>/solution.json` | The same solution in PowerModels' result layout: `termination_status`, `objective`, and `solution` with `bus` (`vm`, `va`), `gen` (`pg`, `qg`) and `branch` (`pf`, `qf`, `pt`, `qt`), in per unit and radians. Buses are keyed by their number, generators and branches by their position in the case (only those in service). `empower json` converts a `solution.m` the same way. |
 | `<case>/violations.csv` | The largest violation of each group of constraints and bounds at the solution, `max(l - v, v - u, 0)`: power balance, power flow equations, branch flow limits, angle differences, voltage and generation bounds (ExaModelsPower's `opf_violations`). The same numbers are the `violation_*` columns of `summary.csv`, and the end of the run prints them as a second table. |

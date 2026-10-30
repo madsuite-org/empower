@@ -253,6 +253,8 @@ function solve_case(file, form, out, opts, summary)
                             form = FORMS[form], objective = r.objective, status = st)
     step("wrote ", dir, "/{solution.m, madnlp.log}")
     t_cb = r.counters.eval_function_time
+    t_init = r.counters.init_time
+    t_la = r.counters.linear_solver_time
     # The largest absolute constraint violation, max(cl - c(x), c(x) - cu, 0), unscaled.
     c = Array(r.constraints)::Vector{Float64}
     cl = Array(model.meta.lcon)::Vector{Float64}
@@ -273,10 +275,10 @@ function solve_case(file, form, out, opts, summary)
     csv(summary, name)
     println(summary, ",", form, ",", st, ",", r.status, ",", r.objective, ",", r.iter, ",",
             model.meta.nvar, ",", model.meta.ncon, ",", t_build, ",", t_solve, ",", t_cb, ",",
-            t_solve - t_cb, ",", viol, ",", vg[1], ",", vg[2], ",", vg[3], ",", vg[4], ",",
+            t_solve - t_cb, ",", t_init, ",", t_la, ",", viol, ",", vg[1], ",", vg[2], ",", vg[3], ",", vg[4], ",",
             vg[5], ",", vg[6])
     flush(summary)
-    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve, t_cb, viol, vg,
+    return (; name, st, obj = r.objective, iter = r.iter, t_build, t_solve, t_cb, t_init, t_la, viol, vg,
             ok = r.status in (MadNLP.SOLVE_SUCCEEDED, MadNLP.SOLVED_TO_ACCEPTABLE_LEVEL))
 end
 
@@ -345,7 +347,8 @@ function run(args::Vector{String})::Cint
     results = []
     open(path, "w") do summary
         println(summary, "case,form,termination_status,raw_status,objective,iterations,nvar,ncon,",
-                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,constraint_violation,",
+                "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_solver,time_solve_init,",
+                "time_solve_linear_algebra,constraint_violation,",
                 "violation_power_balance,violation_power_flow,violation_branch_flow,",
                 "violation_angle_difference,violation_voltage,violation_generation")
         for (k, f) in enumerate(files)
@@ -360,22 +363,24 @@ function run(args::Vector{String})::Cint
                 say(stderr, "error: ", f, ": ", sprint(showerror, err))
                 push!(results, (; name = casename(f), st = "not solved (see the error above)",
                                 obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, t_cb = NaN,
+                                t_init = NaN, t_la = NaN,
                                 viol = NaN, vg = ntuple(_ -> NaN, 6), ok = false))
                 QUIET[] && progress(k, length(files), results[end])
             end
         end
     end
-    head = ["case", "status", "objective", "max viol", "iter", "build (s)", "solve (s)",
-            "evals (s)", "solver (s)"]
+    head = ["case", "status", "objective", "max viol", "iter", "build", "init", "solve",
+            "evals", "lin alg", "other"]
     rows = map(results) do r
-        r.ok || isfinite(r.t_solve) || return vcat([r.name, "not solved"], fill("-", 7))
+        r.ok || isfinite(r.t_solve) || return vcat([r.name, "not solved"], fill("-", 9))
         [r.name, r.st, fmt_g(r.obj), Base.Ryu.writeexp(r.viol, 2), string(r.iter),
-         fixed3(r.t_build), fixed3(r.t_solve), fixed3(r.t_cb), fixed3(r.t_solve - r.t_cb)]
+         fixed3(r.t_build), fixed3(r.t_init), fixed3(r.t_solve), fixed3(r.t_cb), fixed3(r.t_la),
+         fixed3(r.t_solve - r.t_cb - r.t_la)]
     end
     heading("Summary")
     kv("written", path)
     QUIET[] && say("")
-    print_table(head, "llrrrrrrr", rows)
+    print_table(head, "llrrrrrrrrr", rows)
     say("  violations by group, max(l - v, v - u, 0) over each group's constraints and bounds:")
     print_table(["case", "balance", "flow eqs", "branch lim", "angle", "voltage", "gen"], "lrrrrrr",
                 map(r -> vcat([r.name], [isfinite(v) ? Base.Ryu.writeexp(v, 2) : "-" for v in r.vg]), results))
@@ -383,8 +388,9 @@ function run(args::Vector{String})::Cint
     nbad = length(results) - nok
     say("  ", nok > 0 ? sty(:green) : "", nok, " solved", sty(:rst), ", ", nbad > 0 ? sty(:red) : "", nbad,
         " not solved", sty(:rst), ", ", Base.Ryu.writefixed(time() - T_START[], 1), " s in total")
-    say("  ", sty(:dim), "MadNLP with cuDSS. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals")
-    say("  (model functions and derivatives) + solver (MadNLP and cuDSS).", sty(:rst))
+    say("  ", sty(:dim), "MadNLP with cuDSS. max viol: max(cl - c(x), c(x) - cu) at the solution. Times in seconds:")
+    say("  solve = evals (model functions and derivatives) + lin alg (cuDSS) + other (the rest of")
+    say("  MadNLP); init, MadNLP's initialization, is part of solve.", sty(:rst))
     return Cint(nok == length(results) ? 0 : 1)
 end
 

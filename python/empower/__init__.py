@@ -43,7 +43,8 @@ class Result:
     """A solved case.
 
     status: LOCALLY_SOLVED, ALMOST_LOCALLY_SOLVED, LOCALLY_INFEASIBLE, ITERATION_LIMIT,
-    TIME_LIMIT, ...; objective; iterations; time_build, time_solve (seconds);
+    TIME_LIMIT, ...; objective; iterations; time_build, time_solve, and its parts
+    time_evals, time_init, time_linear_algebra (seconds);
     constraint_violation; base_mva; bus, gen, branch: dicts of arrays (per unit, radians);
     dir: the case's output directory, if one was kept.
     """
@@ -145,6 +146,8 @@ def _run(case, form, device, options, output):
             nvar=int(s["nvar"]), ncon=int(s["ncon"]),
             constraint_violation=float(s["constraint_violation"]),
             time_build=float(s["time_parse_and_build"]), time_solve=float(s["time_solve"]),
+            time_evals=float(s["time_solve_callbacks"]), time_init=float(s["time_solve_init"]),
+            time_linear_algebra=float(s["time_solve_linear_algebra"] or "nan"),
             base_mva=mc["baseMVA"],
             bus={"i": col(bus, 1), "vm": col(bus, 8), "va": col(bus, 9, math.pi / 180),
                  "lam_p": col(bus, 14), "lam_q": col(bus, 15)},

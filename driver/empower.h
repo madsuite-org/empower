@@ -39,6 +39,7 @@ typedef struct {
     double objective;
     double constraint_violation;   /* max(cl - c(x), c(x) - cu, 0) at the solution */
     double time_build, time_solve; /* seconds */
+    double time_evals, time_init, time_linear_algebra;   /* parts of time_solve */
     double base_mva;
 
     /* The solution, in the order of the case file's tables: per unit and radians.

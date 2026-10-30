@@ -420,6 +420,7 @@ typedef struct {
     int32_t id;
     long nfev, ngev, nconsev, njev, nhev, iters;
     double tfev, tgev, tconsev, tjev, thev;
+    double t0, t_init;   /* the solve's start; the time to its first iteration (-1 until then) */
 } Model;
 
 static void load_model(Model *M, void *h, const char *p) {
@@ -534,7 +535,9 @@ static Bool on_iter(int alg, int iter, double f, double pr, double du, double mu
                     double reg, double adu, double apr, int ls, void *u) {
     (void)alg; (void)f; (void)pr; (void)du; (void)mu; (void)d; (void)reg; (void)adu;
     (void)apr; (void)ls;
-    ((Model *)u)->iters = iter;
+    Model *M = u;
+    M->iters = iter;
+    if (iter == 0 && M->t_init < 0) M->t_init = now() - M->t0;
     return 1;
 }
 
@@ -790,6 +793,7 @@ typedef struct {
 typedef struct {
     int status, iters, n, m;
     double obj, t_build, t_solve, t_cb, t_total;
+    double t_init, t_la;   /* in the solve: to the first iteration, and in the linear solver */
     double viol;   /* max absolute constraint violation, max(gl - g, g - gu, 0), at the solution */
     double vg[NGROUPS];   /* the largest violation of each group (violations writer) */
     int has_groups;
@@ -956,6 +960,30 @@ static int write_solution_json(const char *solution_m, const char *json) {
     return 0;
 }
 
+/* The wall-clock time Ipopt spent in its linear solver, from the timing statistics at the
+ * end of its log (print_timing_statistics): scaling, symbolic and numeric factorization,
+ * and back solves. NAN if the log has none. */
+static double linear_algebra_time(const char *log) {
+    FILE *f = fopen(log, "r");
+    if (!f) return NAN;
+    if (fseek(f, -65536, SEEK_END) != 0) rewind(f);
+    static const char *timers[] = {"LinearSystemScaling.", "LinearSystemSymbolicFactorization.",
+                                   "LinearSystemFactorization.", "LinearSystemBackSolve."};
+    char line[512];
+    double t = 0;
+    int found = 0;
+    while (fgets(line, sizeof line, f)) {
+        const char *p = line + strspn(line, " ");
+        for (size_t k = 0; k < sizeof timers / sizeof *timers; k++) {
+            if (strncmp(p, timers[k], strlen(timers[k]))) continue;
+            const char *w = strstr(p, "wall:");
+            if (w) { t += strtod(w + 5, NULL); found++; }
+        }
+    }
+    fclose(f);
+    return found ? t : NAN;
+}
+
 static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result *r) {
     double t_case = now();
     char name[1024], out[8192], path[8400];
@@ -1002,6 +1030,8 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     /* --quiet: nothing from Ipopt on the console (ipopt.log keeps everything); an explicit
      * print_level in --options still wins, being set after. */
     if (quiet) { I->int_opt(P, "print_level", 0); I->str_opt(P, "sb", "yes"); }
+    /* Ipopt's timers, at the end of ipopt.log: the linear algebra time is read from there. */
+    I->str_opt(P, "print_timing_statistics", "yes");
     for (int k = 0; k < nopts; k++) {
         char key[512];
         const char *eq = strchr(opts[k], '=');
@@ -1023,8 +1053,15 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     if (!quiet) printf("\n");
     fflush(stdout);
     t0 = now();
+    M.t0 = t0;
+    M.t_init = -1;
     r->status = I->solve(P, x, g, &r->obj, y, zl, zu, &M);
     r->t_solve = now() - t0;
+    r->t_init = M.t_init >= 0 ? M.t_init : r->t_solve;
+    I->free(P);   /* closes ipopt.log */
+    P = NULL;
+    snprintf(path, sizeof path, "%s/ipopt.log", out);
+    r->t_la = linear_algebra_time(path);
     fflush(stdout);
     if (!quiet) printf("\n");
     r->iters = M.iters;
@@ -1059,9 +1096,9 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
 
     if (C->summary) {
         csv_field(C->summary, name);
-        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.3e", C->form,
+        fprintf(C->summary, ",%s,%s,%s,%.17g,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.3e", C->form,
                 termination_status(r->status), status_name(r->status), r->obj, r->iters, r->n,
-                r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb, r->viol);
+                r->m, r->t_build, r->t_solve, r->t_cb, r->t_solve - r->t_cb, r->t_init, r->t_la, r->viol);
         for (int k = 0; k < NGROUPS; k++)
             r->has_groups ? fprintf(C->summary, ",%.3e", r->vg[k]) : fprintf(C->summary, ",");
         fprintf(C->summary, "\n");
@@ -1616,9 +1653,9 @@ static int read_worker_row(const char *path, char *row, size_t cap, Result *r) {
         *c = 0;
         s = c + 1;
     }
-    if (nf < 12) return 1;
+    if (nf < 14) return 1;
     /* form,termination_status,raw_status,objective,iterations,nvar,ncon,build,solve,
-     * callbacks,ipopt,violation[,6 groups] */
+     * callbacks,ipopt,init,linear_algebra,violation[,6 groups] */
     r->st = strdup(fields[1]);
     r->obj = atof(fields[3]);
     r->iters = atoi(fields[4]);
@@ -1627,9 +1664,11 @@ static int read_worker_row(const char *path, char *row, size_t cap, Result *r) {
     r->t_build = atof(fields[7]);
     r->t_solve = atof(fields[8]);
     r->t_cb = atof(fields[9]);
-    r->viol = atof(fields[11]);
-    r->has_groups = nf >= 12 + NGROUPS && *fields[12];
-    for (int k = 0; k < NGROUPS && r->has_groups; k++) r->vg[k] = atof(fields[12 + k]);
+    r->t_init = atof(fields[11]);
+    r->t_la = *fields[12] && strcmp(fields[12], "nan") ? atof(fields[12]) : NAN;
+    r->viol = atof(fields[13]);
+    r->has_groups = nf >= 14 + NGROUPS && *fields[14];
+    for (int k = 0; k < NGROUPS && r->has_groups; k++) r->vg[k] = atof(fields[14 + k]);
     return 0;
 }
 
@@ -1874,6 +1913,9 @@ EMPOWER_API empower_result *empower_solve(empower *e, const char *casefile, cons
     r->constraint_violation = res.viol;
     r->time_build = res.t_build;
     r->time_solve = res.t_solve;
+    r->time_evals = res.t_cb;
+    r->time_init = res.t_init;
+    r->time_linear_algebra = res.t_la;
     r->base_mva = mc->base;
     r->nbus = mc->bus.n;
     r->ngen = mc->gen.n;
@@ -2140,7 +2182,8 @@ int main(int argc, char **argv) {
     C.summary = fopen(path, "w");
     if (!C.summary) die("cannot write %s", path);
     fputs("case,form,termination_status,raw_status,objective,iterations,nvar,ncon,"
-          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt,constraint_violation,"
+          "time_parse_and_build,time_solve,time_solve_callbacks,time_solve_ipopt,time_solve_init,"
+          "time_solve_linear_algebra,constraint_violation,"
           "violation_power_balance,violation_power_flow,violation_branch_flow,"
           "violation_angle_difference,violation_voltage,violation_generation\n",
           C.summary);
@@ -2265,9 +2308,9 @@ int main(int argc, char **argv) {
     if (summary_csv) return failed ? 1 : 0;
 
     /* The runs at a glance, as a table; the full record is summary.csv. */
-    enum { NCOL = 9 };
+    enum { NCOL = 11 };
     const char *head[NCOL] = {"case", "status", "objective", "max viol", "iter",
-                              "build (s)", "solve (s)", "evals (s)", "solver (s)"};
+                              "build", "init", "solve", "evals", "lin alg", "other"};
     char ***cells = xmalloc(cases.n * sizeof *cells);
     for (int i = 0; i < cases.n; i++) {
         Result *r = &res[i];
@@ -2281,9 +2324,16 @@ int main(int argc, char **argv) {
             snprintf(v[3], 64, "%.2e", r->viol);
             snprintf(v[4], 64, "%d", r->iters);
             snprintf(v[5], 64, "%.3f", r->t_build);
-            snprintf(v[6], 64, "%.3f", r->t_solve);
-            snprintf(v[7], 64, "%.3f", r->t_cb);
-            snprintf(v[8], 64, "%.3f", r->t_solve - r->t_cb);
+            snprintf(v[6], 64, "%.3f", r->t_init);
+            snprintf(v[7], 64, "%.3f", r->t_solve);
+            snprintf(v[8], 64, "%.3f", r->t_cb);
+            if (isnan(r->t_la)) {
+                snprintf(v[9], 64, "-");
+                snprintf(v[10], 64, "%.3f", r->t_solve - r->t_cb);
+            } else {
+                snprintf(v[9], 64, "%.3f", r->t_la);
+                snprintf(v[10], 64, "%.3f", r->t_solve - r->t_cb - r->t_la);
+            }
         }
         cells[i] = xmalloc(NCOL * sizeof(char *));
         cells[i][0] = names[i];
@@ -2291,7 +2341,7 @@ int main(int argc, char **argv) {
     }
     heading("Summary");
     kv("written", "%s", path);
-    print_table(NCOL, head, "llrrrrrrr", cases.n, cells);
+    print_table(NCOL, head, "llrrrrrrrrr", cases.n, cells);
     /* The violations by group, when the model library reports them. */
     int ng = 0;
     for (int i = 0; i < cases.n; i++) ng += res[i].has_groups;
@@ -2314,8 +2364,9 @@ int main(int argc, char **argv) {
     }
     printf("  %s%d solved%s, %s%d not solved%s, %.1f s in total\n", solved ? GREEN : "", solved, RST,
            failed ? RED : "", failed, RST, now() - t_start);
-    printf("  %sIpopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. solve = evals\n"
-           "  (model functions and derivatives) + solver (Ipopt and %s).%s\n",
+    printf("  %sIpopt with %s. max viol: max(cl - c(x), c(x) - cu) at the solution. Times in seconds:\n"
+           "  solve = evals (model functions and derivatives) + lin alg (%s) + other (the rest of\n"
+           "  Ipopt); init, the time to the first iteration, is part of solve.%s\n",
            DIM, C.linear_solver, C.linear_solver, RST);
     if (no_hsl)
         printf("  %sMUMPS, without HSL: not for benchmarking; `empower hsl` adds MA27 (see the warning above)%s\n",
