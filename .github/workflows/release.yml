@@ -64,8 +64,11 @@ jobs:
       matrix:
         include:
           - plat: macos-aarch64
-            runner: macos-14
+            runner: macos-15
     runs-on: ${{ matrix.runner }}
+    env:
+      # GitHub retires the macOS 14 runners on 2026-11-02; build on 15 for 14 and newer.
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
