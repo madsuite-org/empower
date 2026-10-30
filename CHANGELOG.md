@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.10.0
+
+- A C API, `libempower` (`include/empower.h`), usable from C and C++, and a Python package (`python/`, `import empower`): solve a case on the cpu or the GPU and get the solution back in memory.
+
 ## v0.9.5
 
 - `solution.json` for each case: the solution in PowerModels' result layout (per unit, radians). `empower json SOLUTION.m` converts an existing solution.

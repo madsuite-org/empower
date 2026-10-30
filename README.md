@@ -83,6 +83,34 @@ A second table gives the violations by group (see `violations.csv` below). `max 
 
 To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
 
+## C, C++ and Python
+
+The install has a C API, `libempower` (`include/empower.h`; `lib/libempower.so`, `lib/libempower.dylib`, or `bin/empower.dll` with `lib/libempower.dll.a`), usable from C and C++, and a Python package (`python/`). Both solve a case with the install's backends and return the solution in memory: status, objective, iterations, times, and the bus voltages, generator dispatch and branch flows, per unit and radians, in the order of the case file's tables (out-of-service generators and branches have zeros).
+
+```c
+#include "empower.h"
+
+empower *e = empower_open(NULL);   /* NULL: the install this library is in */
+if (!e) { fprintf(stderr, "%s\n", empower_error()); return 1; }
+empower_result *r = empower_solve(e, "case118_ieee", "polar", "cpu", "tol=1e-8 max_wall_time=60", NULL);
+if (r) printf("%s %g, vm[0] = %g, pg[0] = %g\n", r->status, r->objective, r->vm[0], r->pg[0]);
+empower_free_result(r);
+empower_close(e);
+```
+
+```sh
+cc -I ~/.empower/include app.c -L ~/.empower/lib -lempower -Wl,-rpath,$HOME/.empower/lib
+```
+
+```python
+import sys; sys.path.insert(0, "/home/me/.empower/python")   # or: pip install ~/.empower/python
+import empower
+r = empower.solve("case118_ieee", form="polar", device="cpu", options={"tol": 1e-8}, time_limit=60)
+r.status, r.objective, r.bus["vm"], r.gen["pg"], r.branch["pf"]   # numpy arrays if numpy is installed
+```
+
+`device="cuda"` (`"cuda"` in C) solves on the GPU. Each solve runs the install's `empower` in a process of its own, about 0.1 s of overhead, and reads the solution back: the Julia runtime in the model library brings its own libraries (OpenSSL among them), and in the same process as a program that has already loaded other versions (numpy loads the system's OpenSSL) it cannot start. The API is not thread-safe; solve one case at a time per process, or use `empower -j` for many cases.
+
 ## Output
 
 | File | Contents |

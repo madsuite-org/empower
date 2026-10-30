@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "empower"
+version = "0.10.0"
+description = "AC and DC optimal power flow with empower (compiled ExaModelsPower, Ipopt, MadNLP)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+numpy = ["numpy"]
+
+[tool.setuptools]
+packages = ["empower"]

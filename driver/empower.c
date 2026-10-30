@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <math.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -56,7 +57,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.9.5"
+#define VERSION "0.10.0"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -181,9 +182,25 @@ static void step(const char *fmt, ...) {
     fflush(stdout);
 }
 
+/* In libempower, an error ends the API call, not the process: die() records the message
+ * and jumps back to the API function that is running. */
+#ifdef EMPOWER_LIB
+static char api_error[2048];
+static jmp_buf api_jmp;
+static int api_active = 0;
+#endif
+
 static void die(const char *fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
 static void die(const char *fmt, ...) {
     va_list ap;
+#ifdef EMPOWER_LIB
+    if (api_active) {
+        va_start(ap, fmt);
+        vsnprintf(api_error, sizeof api_error, fmt, ap);
+        va_end(ap);
+        longjmp(api_jmp, 1);
+    }
+#endif
     fflush(stdout);
     fprintf(stderr, "error: ");
     va_start(ap, fmt);
@@ -197,6 +214,12 @@ static void die(const char *fmt, ...) {
 static int case_error(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static int case_error(const char *fmt, ...) {
     va_list ap;
+#ifdef EMPOWER_LIB
+    va_start(ap, fmt);
+    vsnprintf(api_error, sizeof api_error, fmt, ap);
+    va_end(ap);
+    if (api_active && quiet) return -1;
+#endif
     fflush(stdout);
     fprintf(stderr, "error: ");
     va_start(ap, fmt);
@@ -275,11 +298,18 @@ static int run(char *const args[]) {
     sa.sa_handler = on_signal;
     sigemptyset(&sa.sa_mask);
     if (posix_spawnp(&pid, args[0], NULL, NULL, args, environ) != 0) return -1;
+    int w;
+#ifdef EMPOWER_LIB
+    /* In a library, the calling program's signal handling stays as it is. */
+    (void)sa; (void)old_int; (void)old_term; (void)old_hup;
+    while ((w = waitpid(pid, &st, 0)) < 0 && errno == EINTR) {}
+    if (w < 0) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#else
     child_pid = pid;
     sigaction(SIGINT, &sa, &old_int);
     sigaction(SIGTERM, &sa, &old_term);
     sigaction(SIGHUP, &sa, &old_hup);
-    int w;
     while ((w = waitpid(pid, &st, 0)) < 0 && errno == EINTR) {}
     sigaction(SIGINT, &old_int, NULL);
     sigaction(SIGTERM, &old_term, NULL);
@@ -291,6 +321,7 @@ static int run(char *const args[]) {
         exit(128 + WTERMSIG(st));
     }
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
 #endif
 }
 
@@ -310,7 +341,22 @@ static char root[4096];
 
 static void find_root(void) {
     char exe[4096], real[4096];
+#ifdef EMPOWER_LIB
+    /* libempower: <install>/lib/libempower.so (bin\\empower.dll on Windows). */
 #ifdef _WIN32
+    HMODULE self;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCSTR)(void *)find_root, &self)) return;
+    DWORD k = GetModuleFileNameA(self, exe, sizeof exe);
+    if (k == 0 || k >= sizeof exe) return;
+    if (!_fullpath(real, exe, sizeof real)) return;
+#else
+    Dl_info info;
+    if (!dladdr((void *)find_root, &info) || !info.dli_fname) return;
+    snprintf(exe, sizeof exe, "%s", info.dli_fname);
+    if (!realpath(exe, real)) return;
+#endif
+#elif defined(_WIN32)
     DWORD k = GetModuleFileNameA(NULL, exe, sizeof exe);
     if (k == 0 || k >= sizeof exe) return;
     if (!_fullpath(real, exe, sizeof real)) return;
@@ -1077,6 +1123,34 @@ static int probe_ma27(Ipopt *I, const char *hsllib) {
 }
 
 /* The SOURCE note the installer leaves next to what it installed, or "". */
+static void load_ipopt(Ipopt *I, const char *ipoptlib) {
+    void *hi = lib_open(ipoptlib);
+    if (!hi) die("cannot load Ipopt %s: %s", ipoptlib, lib_error());
+    I->create = sym(hi, "", "CreateIpoptProblem");
+    I->free = sym(hi, "", "FreeIpoptProblem");
+    I->solve = sym(hi, "", "IpoptSolve");
+    I->str_opt = sym(hi, "", "AddIpoptStrOption");
+    I->num_opt = sym(hi, "", "AddIpoptNumOption");
+    I->int_opt = sym(hi, "", "AddIpoptIntOption");
+    I->out_file = sym(hi, "", "OpenIpoptOutputFile");
+    I->intermediate = lib_sym(hi, "SetIntermediateCallback");
+}
+
+/* MA27 if Ipopt can load it (from the HSL library, if any, which Ipopt only loads at
+ * solve time: so solve min (x - 1)^2 with it), else MUMPS, with a warning. */
+static void choose_linear_solver(Ctx *C) {
+    if (probe_ma27(&C->I, C->hsllib)) { C->linear_solver = "ma27"; return; }
+    if (C->hsllib && !hsl_system) die("MA27 could not be loaded from %s", C->hsllib);
+    if (hsl_system)
+        fprintf(stderr, "\n%s%snote:%s found %s, but Ipopt cannot load MA27 from it as it is\n"
+                "(it may need libraries such as Julia's libblastrampoline); `empower hsl %s`\n"
+                "installs an adapted copy.\n", BOLD, YELLOW, RST, C->hsllib, C->hsllib);
+    C->hsllib = NULL;
+    fprintf(stderr, "\n%s%swarning:%s %s\n", BOLD, YELLOW, RST, NO_HSL_WARNING + 9);
+    C->linear_solver = "mumps";
+    no_hsl = 1;
+}
+
 static const char *read_source(const char *kind, char *buf, size_t cap) {
     char path[8192];
     *buf = 0;
@@ -1613,6 +1687,250 @@ static int wait_worker(Proc *procs, int n) {
 #endif
 }
 
+
+/* -------------------------------------------------------------- libempower */
+
+/* libempower runs the empower executable of its install for each solve, as a child
+ * process, and reads the solution back. The Julia runtime and the libraries it brings
+ * (OpenSSL among them) then never meet the ones the calling program has loaded: in the
+ * same process, a system OpenSSL loaded first makes the runtime abort. */
+#ifdef EMPOWER_LIB
+#include "empower.h"
+
+struct empower {
+    char exe[4200];
+};
+
+typedef struct {
+    empower_result r;   /* first: the pointer handed out is to this */
+    MpCase mc;
+    double *cols;
+    char *case_name, *form, *status, *dir;
+} Owned;
+
+#define API_BEGIN(fail)                     \
+    api_error[0] = 0;                       \
+    if (setjmp(api_jmp)) { api_active = 0; return fail; } \
+    api_active = 1
+#define API_END(v) do { api_active = 0; return v; } while (0)
+
+EMPOWER_API const char *empower_error(void) { return api_error; }
+EMPOWER_API const char *empower_version(void) { return VERSION; }
+
+EMPOWER_API empower *empower_open(const char *install) {
+    API_BEGIN(NULL);
+    if (install) snprintf(root, sizeof root, "%s", install);
+    else find_root();
+    if (!*root) die("cannot find the empower install directory");
+#ifdef _WIN32
+    const char *exe = under_root("bin/empower.exe");
+#else
+    const char *exe = under_root("bin/empower");
+#endif
+    if (!exe) die("no empower executable in %s/bin", root);
+    empower *e = xcalloc(1, sizeof *e);
+    snprintf(e->exe, sizeof e->exe, "%s", exe);
+    API_END(e);
+}
+
+/* Remove dir/<case>, its files, and dir (or what of them exists). */
+static void remove_run_dir(const char *dir, const char *name) {
+    static const char *files[] = {"solution.m", "solution.json", "ipopt.log", "madnlp.log",
+                                  "violations.csv", "console.log"};
+    char p[8600];
+    for (size_t k = 0; k < sizeof files / sizeof *files; k++) {
+        if (name) {
+            snprintf(p, sizeof p, "%s/%s/%s", dir, name, files[k]);
+            unlink(p);
+        }
+    }
+    if (name) {
+        snprintf(p, sizeof p, "%s/%s", dir, name);
+        rmdir(p);
+    }
+    static const char *top[] = {"summary.csv", "system.txt", "console.log", "violations.csv"};
+    for (size_t k = 0; k < sizeof top / sizeof *top; k++) {
+        snprintf(p, sizeof p, "%s/%s", dir, top[k]);
+        unlink(p);
+    }
+    rmdir(dir);
+}
+
+static char *temp_dir(void) {
+#ifdef _WIN32
+    char base[MAX_PATH], path[MAX_PATH + 64];
+    if (!GetTempPathA(sizeof base, base)) die("no temporary directory");
+    srand((unsigned)GetTickCount());
+    for (int k = 0; k < 100; k++) {
+        snprintf(path, sizeof path, "%sempower-%lu-%d", base, (unsigned long)GetCurrentProcessId(), rand());
+        if (_mkdir(path) == 0) return strdup(path);
+    }
+    die("cannot create a temporary directory");
+#else
+    const char *t = getenv("TMPDIR");
+    char path[4096];
+    snprintf(path, sizeof path, "%s/empower-XXXXXX", t && *t ? t : "/tmp");
+    if (!mkdtemp(path)) die("cannot create a temporary directory in %s", t && *t ? t : "/tmp");
+    return strdup(path);
+#endif
+}
+
+/* Column col (1-based) of table t, scaled; zeros where a row is shorter. */
+static const double *column(Owned *o, MpTable *t, int col, double scale, int *used) {
+    double *c = o->cols + *used;
+    *used += t->n;
+    for (int i = 0; i < t->n; i++) c[i] = mp_at(t, i, col) * scale;
+    return c;
+}
+
+/* The errors the run printed ("error: ..." lines of its console log), into api_error. */
+static void run_errors(const char *log) {
+    FILE *f = fopen(log, "r");
+    api_error[0] = 0;
+    if (!f) return;
+    char line[2048];
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "error: ", 7)) continue;
+        size_t L = strlen(api_error);
+        snprintf(api_error + L, sizeof api_error - L, "%s", line + 7);
+    }
+    fclose(f);
+    size_t L = strlen(api_error);
+    while (L && (api_error[L - 1] == '\n' || api_error[L - 1] == '\r')) api_error[--L] = 0;
+}
+
+EMPOWER_API empower_result *empower_solve(empower *e, const char *casefile, const char *form,
+                                          const char *device, const char *options, const char *output) {
+    API_BEGIN(NULL);
+    if (!e) die("empower_solve: no empower (did empower_open fail?)");
+    if (!casefile || !*casefile) die("empower_solve: no case");
+    if (!form) form = "polar";
+    if (!device) device = "cpu";
+    char *dir = output ? strdup(output) : temp_dir();
+    MKDIR(dir);
+    char a_form[64], a_dev[64], a_out[8300], a_log[8400], a_csv[8400], *a_opt = NULL;
+    snprintf(a_form, sizeof a_form, "--form=%s", form);
+    snprintf(a_dev, sizeof a_dev, "--device=%s", device);
+    snprintf(a_out, sizeof a_out, "--output=%s", dir);
+    snprintf(a_log, sizeof a_log, "--log=%s/console.log", dir);
+    snprintf(a_csv, sizeof a_csv, "%s/summary.csv", dir);
+    char *cmd[10];
+    int n = 0;
+    cmd[n++] = e->exe;
+    cmd[n++] = (char *)casefile;
+    cmd[n++] = a_form;
+    cmd[n++] = a_dev;
+    cmd[n++] = a_out;
+    cmd[n++] = a_log;
+    cmd[n++] = "--quiet";
+    if (options && *options) {
+        size_t L = strlen(options) + 16;
+        a_opt = xmalloc(L);
+        snprintf(a_opt, L, "--options=%s", options);
+        cmd[n++] = a_opt;
+    }
+    cmd[n] = NULL;
+    unlink(a_csv);
+    int rc = run(cmd);
+    free(a_opt);
+    if (rc < 0) {
+        free(dir);
+        die("could not run %s", e->exe);
+    }
+    Result res = {0};
+    char row[8192];
+    snprintf(a_log, sizeof a_log, "%s/console.log", dir);
+    if (read_worker_row(a_csv, row, sizeof row, &res) != 0) {
+        run_errors(a_log);
+        if (!*api_error) snprintf(api_error, sizeof api_error, "%s could not be solved (empower exited with %d)", casefile, rc);
+        if (!output) remove_run_dir(dir, NULL);
+        free(dir);
+        API_END(NULL);
+    }
+    /* The case name: the first field of the row. */
+    char name[8192];
+    snprintf(name, sizeof name, "%s", row[0] == '"' ? row + 1 : row);
+    name[strcspn(name, row[0] == '"' ? "\"" : ",")] = 0;
+    char sm[8600];
+    snprintf(sm, sizeof sm, "%s/%s/solution.m", dir, name);
+    Owned *o = xcalloc(1, sizeof *o);
+    if (read_matpower(sm, &o->mc) != 0) {
+        free(o);
+        if (!output) remove_run_dir(dir, name);
+        free(dir);
+        die("could not read the solution %s", sm);
+    }
+    MpCase *mc = &o->mc;
+    o->case_name = strdup(name);
+    o->form = strdup(form);
+    o->status = (char *)res.st;   /* strdup'ed by read_worker_row */
+    empower_result *r = &o->r;
+    r->case_name = o->case_name;
+    r->form = o->form;
+    r->status = o->status;
+    r->iterations = res.iters;
+    r->nvar = res.n;
+    r->ncon = res.m;
+    r->objective = res.obj;
+    r->constraint_violation = res.viol;
+    r->time_build = res.t_build;
+    r->time_solve = res.t_solve;
+    r->base_mva = mc->base;
+    r->nbus = mc->bus.n;
+    r->ngen = mc->gen.n;
+    r->nbranch = mc->branch.n;
+    o->cols = xcalloc(5 * mc->bus.n + 3 * mc->gen.n + 6 * mc->branch.n + 1, sizeof(double));
+    int u = 0;
+    double b = 1 / mc->base, deg = M_PI / 180;
+    r->bus_i = column(o, &mc->bus, 1, 1, &u);
+    r->vm = column(o, &mc->bus, 8, 1, &u);
+    r->va = column(o, &mc->bus, 9, deg, &u);
+    r->lam_p = column(o, &mc->bus, 14, 1, &u);
+    r->lam_q = column(o, &mc->bus, 15, 1, &u);
+    r->gen_bus = column(o, &mc->gen, 1, 1, &u);
+    r->pg = column(o, &mc->gen, 2, b, &u);
+    r->qg = column(o, &mc->gen, 3, b, &u);
+    r->f_bus = column(o, &mc->branch, 1, 1, &u);
+    r->t_bus = column(o, &mc->branch, 2, 1, &u);
+    r->pf = column(o, &mc->branch, 14, b, &u);
+    r->qf = column(o, &mc->branch, 15, b, &u);
+    r->pt = column(o, &mc->branch, 16, b, &u);
+    r->qt = column(o, &mc->branch, 17, b, &u);
+    if (output) {
+        char d[8600];
+        snprintf(d, sizeof d, "%s/%s", dir, name);
+        o->dir = strdup(d);
+        r->dir = o->dir;
+    } else
+        remove_run_dir(dir, name);
+    free(dir);
+    API_END(r);
+}
+
+static void free_table(MpTable *t) {
+    for (int i = 0; i < t->n; i++) free(t->row[i]);
+    free(t->row);
+    free(t->len);
+}
+
+EMPOWER_API void empower_free_result(empower_result *r) {
+    if (!r) return;
+    Owned *o = (Owned *)r;
+    free_table(&o->mc.bus);
+    free_table(&o->mc.gen);
+    free_table(&o->mc.branch);
+    free(o->cols);
+    free(o->case_name);
+    free(o->form);
+    free(o->status);
+    free(o->dir);
+    free(o);
+}
+
+EMPOWER_API void empower_close(empower *e) { free(e); }
+#endif /* EMPOWER_LIB */
+
+#ifndef EMPOWER_LIB
 int main(int argc, char **argv) {
     t_start = now();
     init_style();
@@ -1796,16 +2114,7 @@ int main(int argc, char **argv) {
 
     step("loading Ipopt");
     t0 = now();
-    void *hi = lib_open(ipoptlib);
-    if (!hi) die("cannot load Ipopt %s: %s", ipoptlib, lib_error());
-    C.I.create = sym(hi, "", "CreateIpoptProblem");
-    C.I.free = sym(hi, "", "FreeIpoptProblem");
-    C.I.solve = sym(hi, "", "IpoptSolve");
-    C.I.str_opt = sym(hi, "", "AddIpoptStrOption");
-    C.I.num_opt = sym(hi, "", "AddIpoptNumOption");
-    C.I.int_opt = sym(hi, "", "AddIpoptIntOption");
-    C.I.out_file = sym(hi, "", "OpenIpoptOutputFile");
-    C.I.intermediate = lib_sym(hi, "SetIntermediateCallback");
+    load_ipopt(&C.I, ipoptlib);
     step("Ipopt loaded (%.3f s)", now() - t0);
     if (check_hsl) {
         /* For the installer: does Ipopt solve with MA27 from this HSL library? */
@@ -1820,20 +2129,7 @@ int main(int argc, char **argv) {
     C.linear_solver = NULL;
     for (int k = 0; k < nopts; k++)
         if (!strncmp(opts[k], "linear_solver=", 14)) C.linear_solver = opts[k] + 14;
-    if (!C.linear_solver) {
-        if (probe_ma27(&C.I, C.hsllib)) C.linear_solver = "ma27";
-        else if (C.hsllib && !hsl_system) die("MA27 could not be loaded from %s", C.hsllib);
-        else {
-            if (hsl_system)
-                fprintf(stderr, "\n%s%snote:%s found %s, but Ipopt cannot load MA27 from it as it is\n"
-                        "(it may need libraries such as Julia's libblastrampoline); `empower hsl %s`\n"
-                        "installs an adapted copy.\n", BOLD, YELLOW, RST, C.hsllib, C.hsllib);
-            C.hsllib = NULL;
-            fprintf(stderr, "\n%s%swarning:%s %s\n", BOLD, YELLOW, RST, NO_HSL_WARNING + 9);
-            C.linear_solver = "mumps";
-            no_hsl = 1;
-        }
-    }
+    if (!C.linear_solver) choose_linear_solver(&C);
     step("linear solver: %s", C.linear_solver);
 
     MKDIR(out);
@@ -2027,3 +2323,4 @@ int main(int argc, char **argv) {
                YELLOW, RST);
     return failed ? 1 : 0;
 }
+#endif /* EMPOWER_LIB */

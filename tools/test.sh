@@ -41,6 +41,12 @@ done
 # empower json: the same file from a solution.m.
 "$op" json polar/pglib_opf_case118_ieee/solution.m again.json
 cmp again.json polar/pglib_opf_case118_ieee/solution.json
+# The C API (libempower) and the Python package.
+cc -I"$t/empower/include" -o api-test "$root/tools/api/test.c" -L"$t/empower/lib" -lempower -lm -Wl,-rpath,"$t/empower/lib"
+./api-test cpu linear_solver=mumps
+if command -v python3 >/dev/null; then
+    EMPOWER_DIR="$t/empower" PYTHONPATH="$t/empower/python" python3 "$root/tools/api/test.py" cpu linear_solver=mumps
+fi
 # Objectives against the AC values in the PGLib-OPF README (5 significant digits), and
 # against PowerModels' DC OPF (DCPPowerModel) for dc.
 awk -F, 'FNR > 1 {

@@ -35,13 +35,29 @@ echo "JULIA_CPU_TARGET=$JULIA_CPU_TARGET"
 rm -rf stage
 mkdir -p stage/empower/bin
 julia --startup-file=no --project=compile compile/compile.jl stage/empower/emp
+# The driver, and libempower (the C API: driver/empower.h) from the same source.
+mkdir -p stage/empower/lib stage/empower/include
+lib="-DEMPOWER_LIB -Wno-unused-function -Wno-unused-variable"
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         # Static, so the driver adds no MinGW runtime DLLs of its own.
-        cc -O2 -Wall -Wextra -static -o stage/empower/bin/empower.exe driver/empower.c ;;
+        cc -O2 -Wall -Wextra -static -o stage/empower/bin/empower.exe driver/empower.c
+        cc -O2 -Wall -Wextra $lib -shared -static-libgcc -o stage/empower/bin/empower.dll driver/empower.c \
+            -Wl,--out-implib,stage/empower/lib/libempower.dll.a ;;
+    Darwin)
+        cc -O2 -Wall -Wextra -o stage/empower/bin/empower driver/empower.c -ldl -lm
+        cc -O2 -Wall -Wextra $lib -dynamiclib -fvisibility=hidden -install_name @rpath/libempower.dylib \
+            -o stage/empower/lib/libempower.dylib driver/empower.c -lm ;;
     *)
-        cc -O2 -Wall -Wextra -o stage/empower/bin/empower driver/empower.c -ldl -lm ;;
+        cc -O2 -Wall -Wextra -o stage/empower/bin/empower driver/empower.c -ldl -lm
+        cc -O2 -Wall -Wextra $lib -D_GNU_SOURCE -fPIC -shared -fvisibility=hidden -Wl,-soname,libempower.so \
+            -o stage/empower/lib/libempower.so driver/empower.c -ldl -lm ;;
 esac
+cp driver/empower.h stage/empower/include/
+# The Python package (pip install <install>/python).
+mkdir -p stage/empower/python
+cp -R python/empower python/pyproject.toml python/README.md stage/empower/python/
+find stage/empower/python -name __pycache__ -prune -exec rm -rf {} +
 find stage/empower -maxdepth 3 -name 'libemp*' -o -maxdepth 3 -name 'empower*' -type f
 cp LICENSE README.md THIRD_PARTY_NOTICES.md CITATION.bib stage/empower/
 julia --startup-file=no --project=compile compile/licenses.jl stage/empower/licenses

@@ -54,6 +54,14 @@ foreach ($f in 'polar', 'rect', 'dc') {
     }
     if ((Import-Csv "$f\summary.csv").Count -ne 2) { Write-Host "expected 2 cases in $f"; $bad = 1 }
 }
+# The Python package (the C API is built and tested on Linux and macOS).
+$py = Get-Command python -ErrorAction SilentlyContinue
+if ($py) {
+    $env:PYTHONPATH = Join-Path $env:EMPOWER_DIR 'python'
+    & $py.Source (Join-Path $root 'tools\api\test.py') cpu linear_solver=mumps
+    if ($LASTEXITCODE -ne 0) { Write-Host 'Python package test failed'; $bad = 1 }
+}
+if (-not (Test-Path (Join-Path $env:EMPOWER_DIR 'bin\empower.dll'))) { Write-Host 'no bin\empower.dll'; $bad = 1 }
 if ($bad) { exit 1 }
 Write-Host 'all checks passed'
 exit 0

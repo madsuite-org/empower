@@ -34,6 +34,10 @@ awk -F, 'FNR > 1 {
     for (k = NF - 6; k <= NF; k++)
         if ($k == "" || $k > 1e-5) { print "violation (column " k "): " $0; bad = 1 }
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
+# The C API and the Python package, on the GPU.
+cc -I"$t/empower/include" -o api-test "$root/tools/api/test.c" -L"$t/empower/lib" -lempower -lm -Wl,-rpath,"$t/empower/lib"
+./api-test cuda
+EMPOWER_DIR="$t/empower" PYTHONPATH="$t/empower/python" python3 "$root/tools/api/test.py" cuda
 # The executable compiles nothing at run time: a stale gpu/precompile_statements.jl or a
 # workload that misses a code path shows up here as compiled methods.
 # Once with the output in a file and once on a terminal (script's pseudo-terminal), since
