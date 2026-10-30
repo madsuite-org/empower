@@ -1,7 +1,7 @@
 stage/
 compile/deps/
 *.tar.gz
-empower/
+/empower/
 empower-results/
 a.out
 a.exe

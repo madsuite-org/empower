@@ -1799,13 +1799,12 @@ static void run_errors(const char *log) {
     while (L && (api_error[L - 1] == '\n' || api_error[L - 1] == '\r')) api_error[--L] = 0;
 }
 
-EMPOWER_API empower_result *empower_solve(empower *e, const char *casefile, const char *form,
-                                          const char *device, const char *options, const char *output) {
+EMPOWER_API empower_result *empower_solve(empower *e, const char *casefile, const char *form_,
+                                          const char *device_, const char *options, const char *output) {
     API_BEGIN(NULL);
     if (!e) die("empower_solve: no empower (did empower_open fail?)");
     if (!casefile || !*casefile) die("empower_solve: no case");
-    if (!form) form = "polar";
-    if (!device) device = "cpu";
+    const char *form = form_ ? form_ : "polar", *device = device_ ? device_ : "cpu";
     char *dir = output ? strdup(output) : temp_dir();
     MKDIR(dir);
     char a_form[64], a_dev[64], a_out[8300], a_log[8400], a_csv[8400], *a_opt = NULL;
