@@ -119,6 +119,7 @@ static const char *lib_error(void) { return dlerror(); }
 #endif
 
 static double t_start;
+#define MAXJOBS 64   /* --jobs: at most this many worker processes */
 /* --quiet: only warnings, errors and the summary (the solver logs still go to their files) */
 static int quiet = 0;
 
@@ -238,7 +239,6 @@ static void *sym(void *h, const char *prefix, const char *name) {
  * has exited, and print into the terminal. */
 static volatile pid_t child_pid = 0;
 /* The workers of --jobs, killed the same way. */
-#define MAXJOBS 64
 static volatile pid_t workers[MAXJOBS];
 static void on_signal(int sig) {
     pid_t c = child_pid;
