@@ -265,9 +265,9 @@ version = "0.1.0"
 
 [[deps.ExaModels]]
 deps = ["Adapt", "NLPModels", "Printf", "SolverCore"]
-git-tree-sha1 = "d23f29b5db6f5b4c75811e57c0c144eeaba8c39c"
+git-tree-sha1 = "f1e52a876efc201390633cc8bdb1e7c9b709ebfe"
 uuid = "1037b233-b668-4ce9-9b63-f9f681f55dd2"
-version = "0.14.0"
+version = "0.14.2"
 
     [deps.ExaModels.extensions]
     ExaModelsJuMP = "JuMP"
@@ -332,9 +332,9 @@ version = "1.11.0"
 
 [[deps.GPUArrays]]
 deps = ["AcceleratedKernels", "Adapt", "GPUArraysCore", "KernelAbstractions", "LLVM", "LinearAlgebra", "Printf", "Random", "Reexport", "ScopedValues", "Serialization", "SparseArrays", "Statistics"]
-git-tree-sha1 = "f72b034a94bf1578dcc6e5410990f257b2091ada"
+git-tree-sha1 = "1cd2703c11e873a60d0182b6806217a26d71d252"
 uuid = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
-version = "12.1.1"
+version = "12.2.0"
 
     [deps.GPUArrays.extensions]
     JLD2Ext = "JLD2"
@@ -344,15 +344,15 @@ version = "12.1.1"
 
 [[deps.GPUArraysCore]]
 deps = ["Adapt"]
-git-tree-sha1 = "0b2b3e8b8fb7c1f5ddbf498be2eb2b3b37c9c0ed"
+git-tree-sha1 = "f60436514e6d73f8ee069ae4ee0ff038fe96b69d"
 uuid = "46192b85-c4d5-4398-a991-12ede77f4527"
-version = "0.2.1"
+version = "0.2.2"
 
 [[deps.GPUCompiler]]
 deps = ["CompilerCaching", "ExprTools", "InteractiveUtils", "LLVM", "Libdl", "Logging", "PrecompileTools", "Preferences", "REPL", "ScopedValues", "TOML", "Tracy", "UUIDs", "tree_sitter_gcn_jll", "tree_sitter_llvm_jll", "tree_sitter_ptx_jll", "tree_sitter_spirv_jll"]
-git-tree-sha1 = "94a0d5795c52b6673bb828ae350daf7ad3e0220d"
+git-tree-sha1 = "5a50d015b5ef7d39f044b1b32836dc66aa67cfc3"
 uuid = "61eb1bfa-7361-4325-ad38-22787b887f55"
-version = "2.18.0"
+version = "2.19.0"
 
     [deps.GPUCompiler.extensions]
     CthulhuExt = "Cthulhu"
@@ -407,9 +407,9 @@ version = "0.21.4"
 
 [[deps.JSON3]]
 deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
-git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+git-tree-sha1 = "34a52631602d7233eb1dca1a358ae82b656f9f2a"
 uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
-version = "1.14.3"
+version = "1.14.4"
 
     [deps.JSON3.extensions]
     JSON3ArrowExt = ["ArrowTypes"]
@@ -430,9 +430,9 @@ version = "1.12.0"
 
 [[deps.KernelAbstractions]]
 deps = ["Adapt", "Atomix", "GPUCompiler", "GPUToolbox", "KernelInterface", "LLVM", "MacroTools", "PrecompileTools", "Printf", "Random", "Random123", "RandomNumbers", "SPIRVIntrinsics", "SPIRV_LLVM_Backend_jll", "SPIRV_Tools_jll", "StaticArraysCore", "UnsafeAtomics", "pocl_standalone_jll"]
-git-tree-sha1 = "5b043fe21f471775ed2b40ef447d2d7dd45b2fe5"
+git-tree-sha1 = "d1bd7d3432cb6cd9ac5f8d8a1822f8be7ebf0d96"
 uuid = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
-version = "0.10.3"
+version = "0.10.4"
 
     [deps.KernelAbstractions.extensions]
     AMDGPUExt = "AMDGPU"
@@ -751,9 +751,9 @@ weakdeps = ["REPL"]
 
 [[deps.PowerIO]]
 deps = ["JSON3", "LazyArtifacts", "Libdl", "Preferences", "SparseArrays"]
-git-tree-sha1 = "fd9f5725586e24bb7bce5a48b0c611fd8a81a17b"
+git-tree-sha1 = "089a021cc1b1bcc3fbd1e7c13b83ca2aa2a98961"
 uuid = "05ed8b54-f668-4096-9d0d-e8c3dd9dc169"
-version = "0.11.6"
+version = "0.11.7"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -831,10 +831,10 @@ uuid = "63e82ce6-3d80-5af4-a84c-484b71ab98bb"
 version = "3.9.0+2"
 
 [[deps.SPIRVIntrinsics]]
-deps = ["ExprTools", "GPUToolbox", "LLVM", "UnsafeAtomics"]
-git-tree-sha1 = "24aeb6431481bb68b18222dc2b61dadc8795b9a6"
+deps = ["GPUToolbox", "LLVM", "UnsafeAtomics"]
+git-tree-sha1 = "2ee2b6f667d53d1f03079ce7179f7de7ef5058b7"
 uuid = "71d1d633-e7e8-4a92-83a1-de8814b09ba8"
-version = "1.5.1"
+version = "1.6.0"
 
     [deps.SPIRVIntrinsics.extensions]
     SPIRVIntrinsicsSIMDExt = "SIMD"

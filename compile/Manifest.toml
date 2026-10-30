@@ -163,9 +163,9 @@ version = "0.21.4"
 
 [[deps.JSON3]]
 deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
-git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+git-tree-sha1 = "34a52631602d7233eb1dca1a358ae82b656f9f2a"
 uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
-version = "1.14.3"
+version = "1.14.4"
 
     [deps.JSON3.extensions]
     JSON3ArrowExt = ["ArrowTypes"]
@@ -333,9 +333,9 @@ version = "1.12.1"
 
 [[deps.PowerIO]]
 deps = ["JSON3", "LazyArtifacts", "Libdl", "Preferences", "SparseArrays"]
-git-tree-sha1 = "fd9f5725586e24bb7bce5a48b0c611fd8a81a17b"
+git-tree-sha1 = "089a021cc1b1bcc3fbd1e7c13b83ca2aa2a98961"
 uuid = "05ed8b54-f668-4096-9d0d-e8c3dd9dc169"
-version = "0.11.6"
+version = "0.11.7"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]

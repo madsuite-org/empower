@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.4
+
+- Newer dependencies: ExaModels 0.14.2 for the cuda backend (less compile time in model building and first evaluation), KernelAbstractions 0.10.4, ExaPowerIO 0.3.4.
+
 ## v0.9.3
 
 - The first cases of a cuda run are as fast as later ones: after its warm-up, `empower-cuda` runs one full garbage collection (about 0.2 s). Until the first full collection, every young collection also marked the objects of the executable's image, about 0.17 s each.
