@@ -41,6 +41,8 @@ Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install d
 
 ```
 empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--options="NAME=VALUE ..."] [--output=DIR]
+                  [--time-limit=SECONDS] [--jobs=N] [--quiet]
+empower json SOLUTION.m [OUT.json]   a solved case as JSON (each run writes solution.json)
 empower up                     update to the latest release, for the backends installed
 empower hsl [LINK|FILE|LIB]    add HSL MA27: the link from HSL's email, the package, or a library
 empower download               download the whole PGLib-OPF v23.07 library
@@ -55,6 +57,9 @@ empower check                  solve case14 with each installed backend (the ins
 | `--solver` | `ipopt` on the CPU, `madnlp` on the GPU (the defaults, and the only solvers in this release). |
 | `--options` | Solver options separated by spaces or commas, for example `--options="tol=1e-8 max_iter=500"`. `--options=@FILE` reads one `NAME VALUE` per line. May be repeated. On the CPU the linear solver is `ma27` (`mumps` without HSL); with an HSL library that has them, `linear_solver=ma57` (or `ma86`, `ma97`) selects another. On the GPU they are MadNLP options. |
 | `--output` | Output directory (default `./empower-results`). |
+| `--time-limit` | Wall-clock limit per case, in seconds (the solver's `max_wall_time`). A case that reaches it ends with status `TIME_LIMIT`. |
+| `-j`, `--jobs` | Solve up to N cases at a time, each in its own process (`--device=cpu` only). Each case's console output goes to `<case>/console.log`; the console shows a line per finished case and the summary. Each process solves with one thread, so N up to the number of physical cores is reasonable. |
+| `-q`, `--quiet` | Print only warnings, errors, one line per case, and the summary. The solver logs are written in full either way. |
 | `--hsl-lib` | HSL library to use (default `~/.empower/hsl`, or `EMPOWER_HSL_LIB`, or `libhsl`/`libcoinhsl` in `/usr/local/lib` and the other standard library directories). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
 
@@ -84,8 +89,10 @@ To update to the latest release, run `empower up` (or `empower update`). It runs
 |---|---|
 | `summary.csv` | Rewritten each run, one row per case: termination status, objective, iterations, problem size, the time to parse and build the model and to solve (split into model callbacks and the solver), and the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). The end of the run prints the same table. |
 | `<case>/solution.m` | The solved case, in the layout MATPOWER's `savecase` writes for an OPF result: the input case with `VM`, `VA`, `PG`, `QG`, `VG` updated and the result columns appended, `PF`, `QF`, `PT`, `QT` and the multipliers `LAM_P`, `LAM_Q`, `MU_VMAX`, `MU_VMIN` (bus), `MU_PMAX`, `MU_PMIN`, `MU_QMAX`, `MU_QMIN` (gen) and `MU_SF`, `MU_ST`, `MU_ANGMIN`, `MU_ANGMAX` (branch), in MATPOWER's units. The objective and termination status are in a comment at the top. For `dc`, as in MATPOWER's DC OPF, `VM` is 1 and the reactive columns are 0. Written by ExaModelsPower's `write_matpower_solution`, compiled into the model library. |
+| `<case>/solution.json` | The same solution in PowerModels' result layout: `termination_status`, `objective`, and `solution` with `bus` (`vm`, `va`), `gen` (`pg`, `qg`) and `branch` (`pf`, `qf`, `pt`, `qt`), in per unit and radians. Buses are keyed by their number, generators and branches by their position in the case (only those in service). `empower json` converts a `solution.m` the same way. |
 | `<case>/violations.csv` | The largest violation of each group of constraints and bounds at the solution, `max(l - v, v - u, 0)`: power balance, power flow equations, branch flow limits, angle differences, voltage and generation bounds (ExaModelsPower's `opf_violations`). The same numbers are the `violation_*` columns of `summary.csv`, and the end of the run prints them as a second table. |
 | `<case>/ipopt.log` | Full Ipopt output (`madnlp.log`, MadNLP's, with `--device=cuda`). |
+| `<case>/console.log` | With `--jobs`: what the case's process printed. |
 | `system.txt` | The date, OS, CPU, empower version, the Ipopt and HSL libraries used (and where they came from), and the command. |
 
 ## HSL (MA27)

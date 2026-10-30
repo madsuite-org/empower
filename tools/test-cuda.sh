@@ -11,15 +11,17 @@ export EMPOWER_ARCHIVE="$root/empower-linux-x86_64.tar.gz" EMPOWER_CUDA_ARCHIVE=
 export EMPOWER_SKIP_HSL=1
 sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --backends=cpu,cuda
 op="$t/empower/bin/empower"
-for f in polar rect dc; do
-    "$op" case14_ieee case118_ieee --device=cuda --form=$f --output=$f
-done
+"$op" case14_ieee case118_ieee --device=cuda --form=polar --output=polar
+"$op" case14_ieee case118_ieee --device=cuda --form=rect --output=rect --quiet --time-limit=600 > rect.log
+grep -q "\[2/2\]" rect.log
+"$op" case14_ieee case118_ieee --device=cuda --form=dc --output=dc
 for f in polar rect dc; do
     cat "$f/summary.csv"
     for c in pglib_opf_case14_ieee pglib_opf_case118_ieee; do
         grep -q "status = LOCALLY_SOLVED" "$f/$c/solution.m"
         test "$(grep -c '^[a-z_]*,[-0-9.e+]*$' "$f/$c/violations.csv")" -eq 6
         test -s "$f/$c/madnlp.log"
+        grep -q '"termination_status": "LOCALLY_SOLVED"' "$f/$c/solution.json"
     done
 done
 # Objectives against the AC values in the PGLib-OPF README (5 significant digits), and
@@ -39,6 +41,7 @@ awk -F, 'FNR > 1 {
 EMPOWER_TRACE_COMPILE=1 "$op" case14_ieee case300_ieee --device=cuda --form=polar --output=trace > trace.log 2>&1
 script -q -e -c "EMPOWER_TRACE_COMPILE=1 '$op' case14_ieee case300_ieee --device=cuda --form=polar --output=trace" trace-tty.log > /dev/null
 cat trace-tty.log >> trace.log
+EMPOWER_TRACE_COMPILE=1 "$op" case14_ieee --device=cuda --form=rect --quiet --time-limit=600 --output=trace >> trace.log 2>&1
 n=$(grep -c "precompile(" trace.log || true)
 if [ "$n" -ne 0 ]; then
     echo "compiled $n methods at run time:"; grep "precompile(" trace.log | cut -c1-300; exit 1

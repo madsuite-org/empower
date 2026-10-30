@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.5
+
+- `solution.json` for each case: the solution in PowerModels' result layout (per unit, radians). `empower json SOLUTION.m` converts an existing solution.
+- `--time-limit=SECONDS`: a wall-clock limit per case (status `TIME_LIMIT`).
+- `-j N` / `--jobs=N` (cpu): N cases at a time, each in its own process.
+- `-q` / `--quiet`: only warnings, errors, one line per case, and the summary.
+
 ## v0.9.4
 
 - Newer dependencies: ExaModels 0.14.2 for the cuda backend (less compile time in model building and first evaluation), KernelAbstractions 0.10.4, ExaPowerIO 0.3.4.

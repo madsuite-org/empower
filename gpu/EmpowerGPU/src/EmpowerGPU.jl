@@ -141,9 +141,18 @@ function init_style()
 end
 sty(k) = get(STYLE, k, "")
 const T_START = Ref(0.0)
-step(args...) = say("  ", sty(:dim), lpad(Base.Ryu.writefixed(time() - T_START[], 3), 8), "s", sty(:rst), "  ", args...)
-kv(label, args...) = say("  ", rpad(label, 9), args...)
-heading(t) = say("\n", sty(:bold), "\u2500\u2500 ", t, " ", "\u2500"^max(78 - length(t) - 4, 0), sty(:rst))
+# --quiet: only warnings, errors, a line per case and the summary.
+const QUIET = Ref(false)
+step(args...) = QUIET[] ? nothing : say("  ", sty(:dim), lpad(Base.Ryu.writefixed(time() - T_START[], 3), 8), "s", sty(:rst), "  ", args...)
+kv(label, args...) = QUIET[] ? nothing : say("  ", rpad(label, 9), args...)
+heading(t) = QUIET[] ? nothing : say("\n", sty(:bold), "\u2500\u2500 ", t, " ", "\u2500"^max(78 - length(t) - 4, 0), sty(:rst))
+
+# One line per finished case, as the cpu backend prints it with --quiet.
+function progress(k, n, r)
+    st = r.ok || isfinite(r.t_solve) ? r.st : "not solved"
+    say("  ", rpad(string("[", k, "/", n, "] ", r.name), 39), sty(r.ok ? :green : :red), rpad(st, 22), sty(:rst),
+        isfinite(r.t_solve) ? string(" objective ", rpad(fmt_g(r.obj), 14), " ", lpad(fixed3(r.t_build + r.t_solve), 8), " s") : "")
+end
 
 # The summary's numbers, as C's printf writes them in the cpu backend's summary.
 fixed3(t) = isfinite(t) ? Base.Ryu.writefixed(t, 3) : "-"
@@ -283,6 +292,7 @@ end
 # The app: solve each case and write the results; the exit code.
 function run(args::Vector{String})::Cint
     init_style()
+    QUIET[] = false
     # EMPOWER_GC_LOG=1: Julia's log of each garbage collection (kind, duration, heap).
     get(ENV, "EMPOWER_GC_LOG", "") == "1" && GC.enable_logging(true)
     # Ctrl-C exits (empower, which runs this, kills it as well).
@@ -304,6 +314,8 @@ function run(args::Vector{String})::Cint
             form = a[8:end]
         elseif startswith(a, "--output=")
             out = a[10:end]
+        elseif a == "--quiet"
+            QUIET[] = true
         elseif a == "--option" && i < length(args)
             push!(opts, option(args[i += 1]))
         else
@@ -312,6 +324,8 @@ function run(args::Vector{String})::Cint
         i += 1
     end
     haskey(FORMS, form) || (say(stderr, "error: --form must be polar, rect or dc"); return Cint(2))
+    # Nothing from MadNLP on the console (madnlp.log keeps everything), unless asked for.
+    QUIET[] && !any(p -> first(p) === :print_level, opts) && push!(opts, :print_level => MadNLP.ERROR)
     t_gpu = @elapsed (dev = CUDACore.device(); CUDACore.synchronize())
     kv("gpu", CUDACore.name(dev), " (context ", fixed3(t_gpu), " s)")
     t_pre = @elapsed (nk = preload(dev))
@@ -339,6 +353,7 @@ function run(args::Vector{String})::Cint
             step("case ", f)
             try
                 push!(results, measured(() -> profiled(() -> solve_case(f, form, out, opts, summary), k)))
+                QUIET[] && progress(k, length(files), results[end])
             catch err
                 # Ctrl-C ends the run; it is not this case's error.
                 err isa InterruptException && rethrow()
@@ -346,6 +361,7 @@ function run(args::Vector{String})::Cint
                 push!(results, (; name = casename(f), st = "not solved (see the error above)",
                                 obj = NaN, iter = 0, t_build = NaN, t_solve = NaN, t_cb = NaN,
                                 viol = NaN, vg = ntuple(_ -> NaN, 6), ok = false))
+                QUIET[] && progress(k, length(files), results[end])
             end
         end
     end
@@ -358,6 +374,7 @@ function run(args::Vector{String})::Cint
     end
     heading("Summary")
     kv("written", path)
+    QUIET[] && say("")
     print_table(head, "llrrrrrrr", rows)
     say("  violations by group, max(l - v, v - u, 0) over each group's constraints and bounds:")
     print_table(["case", "balance", "flow eqs", "branch lim", "angle", "voltage", "gen"], "lrrrrrr",
@@ -384,6 +401,8 @@ end
                 run(["--form=$form", "--output=$out", case])
                 run(["--form=$form", "--output=$out", "--option", "print_level=WARN",
                      "--option", "tol=1e-8", "--option", "max_iter=3000", case])
+                # --quiet, with a time limit (--time-limit).
+                run(["--form=$form", "--output=$out", "--quiet", "--option", "max_wall_time=3600.0", case])
             end
         end
         rm(out; recursive = true)

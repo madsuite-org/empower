@@ -11,7 +11,10 @@ export EMPOWER_ARCHIVE="$root/empower-$plat.tar.gz" EMPOWER_SKIP_HSL=1
 sh "$root/install.sh" -y --path "$t/empower" --add-to-path=no --backends=cpu
 op="$t/empower/bin/empower"
 "$op" case14_ieee case118_ieee --form=polar --options="tol=1e-8 max_iter=500 linear_solver=mumps" --output=polar
-"$op" case14_ieee case118_ieee --form=rect --options=linear_solver=mumps --output=rect
+# Two worker processes, --quiet, and a time limit.
+"$op" case14_ieee case118_ieee --form=rect --options=linear_solver=mumps --output=rect -j 2 --quiet --time-limit=600 > rect.log
+grep -q "\[2/2\]" rect.log
+test -f rect/pglib_opf_case118_ieee/console.log
 "$op" case14_ieee case118_ieee --form=dc --options=linear_solver=mumps --output=dc
 "$op" --help > /dev/null
 # Without HSL and without an explicit linear solver, empower uses MUMPS and says how to get MA27.
@@ -30,9 +33,14 @@ for f in polar rect dc; do
         grep -q "status = LOCALLY_SOLVED" "$f/$c/solution.m"
         test "$(grep -c '^[a-z_]*,[-0-9.e+]*$' "$f/$c/violations.csv")" -eq 6
         grep -q "^mpc.branch" "$f/$c/solution.m"
+        grep -q '"termination_status": "LOCALLY_SOLVED"' "$f/$c/solution.json"
+        grep -q '"branch": {' "$f/$c/solution.json"
         grep -qi "linear solver mumps" "$f/$c/ipopt.log"
     done
 done
+# empower json: the same file from a solution.m.
+"$op" json polar/pglib_opf_case118_ieee/solution.m again.json
+cmp again.json polar/pglib_opf_case118_ieee/solution.json
 # Objectives against the AC values in the PGLib-OPF README (5 significant digits), and
 # against PowerModels' DC OPF (DCPPowerModel) for dc.
 awk -F, 'FNR > 1 {

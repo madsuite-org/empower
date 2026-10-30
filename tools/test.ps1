@@ -16,7 +16,8 @@ $env:EMPOWER_SKIP_HSL = '1'
 & (Join-Path $root 'install.ps1')
 $op = Join-Path $env:EMPOWER_DIR 'bin\empower.exe'
 & $op case14_ieee case118_ieee --form=polar '--options=tol=1e-8 max_iter=500 linear_solver=mumps' --output=polar
-& $op case14_ieee case118_ieee --form=rect --options=linear_solver=mumps --output=rect
+# Two worker processes, --quiet, and a time limit.
+& $op case14_ieee case118_ieee --form=rect --options=linear_solver=mumps --output=rect -j 2 --quiet --time-limit=600
 & $op case14_ieee case118_ieee --form=dc --options=linear_solver=mumps --output=dc
 
 $bad = 0
@@ -48,6 +49,8 @@ foreach ($f in 'polar', 'rect', 'dc') {
         if ((Get-Content "$f\$($row.case)\violations.csv" | Select-Object -Skip 1).Count -ne 6) { Write-Host "violations.csv: $($row.case) $f"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'linear solver mumps' -Path "$f\$($row.case)\ipopt.log")) { Write-Host "not mumps: $($row.case) $f"; $bad = 1 }
         if (-not (Select-String -Quiet -Pattern 'status = LOCALLY_SOLVED' -Path "$f\$($row.case)\solution.m")) { Write-Host "no solved case file: $($row.case) $f"; $bad = 1 }
+        $js = Get-Content -Raw "$f\$($row.case)\solution.json" | ConvertFrom-Json
+        if ($js.termination_status -ne 'LOCALLY_SOLVED' -or -not $js.solution.bus) { Write-Host "solution.json: $($row.case) $f"; $bad = 1 }
     }
     if ((Import-Csv "$f\summary.csv").Count -ne 2) { Write-Host "expected 2 cases in $f"; $bad = 1 }
 }

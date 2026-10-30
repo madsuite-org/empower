@@ -56,7 +56,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.9.4"
+#define VERSION "0.9.5"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -119,6 +119,8 @@ static const char *lib_error(void) { return dlerror(); }
 #endif
 
 static double t_start;
+/* --quiet: only warnings, errors and the summary (the solver logs still go to their files) */
+static int quiet = 0;
 
 /* Styles on a terminal (unless NO_COLOR is set); plain text otherwise. The rule is
  * ASCII on Windows, whose console may not show box-drawing characters. */
@@ -141,6 +143,7 @@ static void init_style(void) {
 /* "── [1/3] case ─────": a heading across 78 columns. */
 static void heading(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void heading(const char *fmt, ...) {
+    if (quiet) return;
     char t[1024];
     va_list ap;
     va_start(ap, fmt);
@@ -154,6 +157,7 @@ static void heading(const char *fmt, ...) {
 /* "  label    value" */
 static void kv(const char *label, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void kv(const char *label, const char *fmt, ...) {
+    if (quiet) return;
     va_list ap;
     printf("  %-9s", label);
     va_start(ap, fmt);
@@ -166,6 +170,7 @@ static const char *status_color(int ok) { return ok ? GREEN : RED; }
 
 static void step(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void step(const char *fmt, ...) {
+    if (quiet) return;
     va_list ap;
     printf("  %s%8.3fs%s  ", DIM, now() - t_start, RST);
     va_start(ap, fmt);
@@ -232,9 +237,14 @@ static void *sym(void *h, const char *prefix, const char *name) {
  * at once: empower-cuda, busy on the GPU, would otherwise keep solving after empower
  * has exited, and print into the terminal. */
 static volatile pid_t child_pid = 0;
+/* The workers of --jobs, killed the same way. */
+#define MAXJOBS 64
+static volatile pid_t workers[MAXJOBS];
 static void on_signal(int sig) {
     pid_t c = child_pid;
     if (c > 0) kill(c, SIGKILL);
+    for (int k = 0; k < MAXJOBS; k++)
+        if (workers[k] > 0) kill(workers[k], SIGKILL);
     static const char msg[] = "\ninterrupted\n";
     (void)!write(2, msg, sizeof msg - 1);
     _exit(128 + sig);
@@ -737,6 +747,7 @@ typedef struct {
     double viol;   /* max absolute constraint violation, max(gl - g, g - gu, 0), at the solution */
     double vg[NGROUPS];   /* the largest violation of each group (violations writer) */
     int has_groups;
+    const char *st;   /* termination status, as in summary.csv */
 } Result;
 
 /* A CSV field, quoted when it holds a comma, quote, or newline. */
@@ -748,6 +759,155 @@ static void csv_field(FILE *f, const char *v) {
         fputc(*v, f);
     }
     fputc('"', f);
+}
+
+/* ------------------------------------------------------------ MATPOWER tables */
+
+/* The bus, gen and branch tables of a MATPOWER case (row by row, as numbers), its base
+ * MVA, and the objective and status of a solution written by ExaModelsPower. */
+typedef struct {
+    int n, cap, *len;
+    double **row;
+} MpTable;
+typedef struct {
+    double base, objective;
+    char status[64];
+    MpTable bus, gen, branch;
+} MpCase;
+
+static void mp_push(MpTable *t, double *v, int k) {
+    if (t->n == t->cap) {
+        t->cap = t->cap ? 2 * t->cap : 64;
+        t->row = xrealloc(t->row, t->cap * sizeof *t->row);
+        t->len = xrealloc(t->len, t->cap * sizeof *t->len);
+    }
+    t->row[t->n] = xmalloc((k ? k : 1) * sizeof(double));
+    memcpy(t->row[t->n], v, k * sizeof(double));
+    t->len[t->n++] = k;
+}
+
+/* The numbers of one table row ("1 3 0 0 ...", separated by spaces, tabs or commas). */
+static int mp_numbers(const char *seg, double *v, int cap) {
+    int k = 0;
+    const char *q = seg;
+    while (*q && k < cap) {
+        while (*q == ' ' || *q == '\t' || *q == ',' || *q == '\r' || *q == '\n') q++;
+        if (!*q) break;
+        char *end;
+        double x = strtod(q, &end);
+        if (end == q) break;
+        v[k++] = x;
+        q = end;
+    }
+    return k;
+}
+
+/* Which table a line opens (mpc.bus = [ ...): 1 bus, 2 gen, 3 branch, -1 another one, 0 none;
+ * *rest points after the '['. */
+static int mp_opens(const char *code, const char **rest) {
+    const char *m = strstr(code, "mpc.");
+    if (!m) return 0;
+    const char *b = strchr(m, '[');
+    if (!b) return 0;
+    *rest = b + 1;
+    if (!strncmp(m + 4, "bus", 3) && (m[7] == ' ' || m[7] == '=' || m[7] == '\t')) return 1;
+    if (!strncmp(m + 4, "gen", 3) && (m[7] == ' ' || m[7] == '=' || m[7] == '\t')) return 2;
+    if (!strncmp(m + 4, "branch", 6)) return 3;
+    return -1;
+}
+
+static int read_matpower(const char *path, MpCase *mc) {
+    memset(mc, 0, sizeof *mc);
+    mc->base = 100;
+    mc->objective = NAN;
+    FILE *f = fopen(path, "r");
+    if (!f) return 1;
+    char line[16384];
+    int table = 0;
+    double v[64];
+    while (fgets(line, sizeof line, f)) {
+        const char *h = strstr(line, "Solved by ExaModelsPower: objective = ");
+        if (h) {
+            mc->objective = strtod(h + 38, NULL);
+            const char *st = strstr(h, "status = ");
+            if (st) {
+                snprintf(mc->status, sizeof mc->status, "%s", st + 9);
+                mc->status[strcspn(mc->status, " \r\n")] = 0;
+            }
+        }
+        char *pct = strchr(line, '%');
+        if (pct) *pct = 0;
+        const char *code = line;
+        if (!table) {
+            const char *bm = strstr(code, "mpc.baseMVA");
+            if (bm && strchr(bm, '=')) mc->base = strtod(strchr(bm, '=') + 1, NULL);
+            const char *rest;
+            int t = mp_opens(code, &rest);
+            if (!t) continue;
+            table = t;
+            code = rest;
+        }
+        /* rows end at ';', the table at ']' */
+        char *close = strchr((char *)code, ']');
+        if (close) *close = 0;
+        char *seg = (char *)code;
+        for (;;) {
+            char *semi = strchr(seg, ';');
+            if (semi) *semi = 0;
+            int k = mp_numbers(seg, v, 64);
+            if (k > 0 && table > 0)
+                mp_push(table == 1 ? &mc->bus : table == 2 ? &mc->gen : &mc->branch, v, k);
+            if (!semi) break;
+            seg = semi + 1;
+        }
+        if (close) table = 0;
+    }
+    fclose(f);
+    return mc->bus.n ? 0 : 1;
+}
+
+static double mp_at(MpTable *t, int i, int col) { return col <= t->len[i] ? t->row[i][col - 1] : 0; }
+
+/* <case>/solution.json from the solved case solution.m, in PowerModels' result layout:
+ * per-unit powers, radians, buses keyed by number, generators and branches by their
+ * position in the case (only those in service). */
+static int write_solution_json(const char *solution_m, const char *json) {
+    MpCase mc;
+    if (read_matpower(solution_m, &mc) != 0) return 1;
+    FILE *f = fopen(json, "w");
+    if (!f) return 1;
+    double b = mc.base, deg = M_PI / 180;
+    fprintf(f, "{\n  \"termination_status\": \"%s\",\n  \"objective\": %.17g,\n", mc.status,
+            mc.objective);
+    fprintf(f, "  \"solution\": {\n    \"baseMVA\": %.17g,\n    \"per_unit\": true,\n", b);
+    fprintf(f, "    \"bus\": {");
+    int first = 1;
+    for (int i = 0; i < mc.bus.n; i++) {
+        if (mp_at(&mc.bus, i, 2) == 4) continue;   /* isolated */
+        fprintf(f, "%s\n      \"%.0f\": {\"vm\": %.17g, \"va\": %.17g}", first ? "" : ",",
+                mp_at(&mc.bus, i, 1), mp_at(&mc.bus, i, 8), mp_at(&mc.bus, i, 9) * deg);
+        first = 0;
+    }
+    fprintf(f, "\n    },\n    \"gen\": {");
+    first = 1;
+    for (int i = 0; i < mc.gen.n; i++) {
+        if (mp_at(&mc.gen, i, 8) <= 0) continue;
+        fprintf(f, "%s\n      \"%d\": {\"pg\": %.17g, \"qg\": %.17g}", first ? "" : ",", i + 1,
+                mp_at(&mc.gen, i, 2) / b, mp_at(&mc.gen, i, 3) / b);
+        first = 0;
+    }
+    fprintf(f, "\n    },\n    \"branch\": {");
+    first = 1;
+    for (int i = 0; i < mc.branch.n; i++) {
+        if (mp_at(&mc.branch, i, 11) <= 0) continue;
+        fprintf(f, "%s\n      \"%d\": {\"pf\": %.17g, \"qf\": %.17g, \"pt\": %.17g, \"qt\": %.17g}",
+                first ? "" : ",", i + 1, mp_at(&mc.branch, i, 14) / b, mp_at(&mc.branch, i, 15) / b,
+                mp_at(&mc.branch, i, 16) / b, mp_at(&mc.branch, i, 17) / b);
+        first = 0;
+    }
+    fprintf(f, "\n    }\n  }\n}\n");
+    fclose(f);
+    return 0;
 }
 
 static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result *r) {
@@ -793,6 +953,9 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     I->out_file(P, path, 5);
     if (C->hsllib) I->str_opt(P, "hsllib", C->hsllib);
     I->str_opt(P, "linear_solver", C->linear_solver);
+    /* --quiet: nothing from Ipopt on the console (ipopt.log keeps everything); an explicit
+     * print_level in --options still wins, being set after. */
+    if (quiet) { I->int_opt(P, "print_level", 0); I->str_opt(P, "sb", "yes"); }
     for (int k = 0; k < nopts; k++) {
         char key[512];
         const char *eq = strchr(opts[k], '=');
@@ -811,14 +974,15 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     }
 
     step("solving with Ipopt, %s", C->linear_solver);
-    printf("\n");
+    if (!quiet) printf("\n");
     fflush(stdout);
     t0 = now();
     r->status = I->solve(P, x, g, &r->obj, y, zl, zu, &M);
     r->t_solve = now() - t0;
     fflush(stdout);
-    printf("\n");
+    if (!quiet) printf("\n");
     r->iters = M.iters;
+    r->st = termination_status(r->status);
     /* Ipopt returns the constraint values at the solution in g, unscaled. */
     r->viol = 0;
     for (int i = 0; i < m; i++) {
@@ -833,8 +997,12 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
     snprintf(path, sizeof path, "%s/solution.m", out);
     if (M.write_matpower(M.id, path, x, y, zl, zu, r->obj, termination_status(r->status)) != 0)
         case_error("could not write %s", path);
-    else
-        step("wrote %s/{solution.m, ipopt.log}", out);
+    else {
+        char json[8400];
+        snprintf(json, sizeof json, "%s/solution.json", out);
+        if (write_solution_json(path, json) != 0) case_error("could not write %s", json);
+        step("wrote %s/{solution.m, solution.json, ipopt.log}", out);
+    }
     if (M.write_violations) {
         snprintf(path, sizeof path, "%s/violations.csv", out);
         r->has_groups = M.write_violations(M.id, path, x, y, zl, zu, r->obj,
@@ -1044,7 +1212,8 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     /* The bundle's own depot, then the NVIDIA libraries the installer downloaded. */
     char depot[16400];
     snprintf(depot, sizeof depot, "%s/cuda/share/julia:%s/cuda-depot", root, root);
-    printf("%sempower %s%s  " DOT "  %s form  " DOT "  MadNLP with cuDSS on the GPU\n", BOLD, VERSION, RST, form);
+    if (!quiet)
+        printf("%sempower %s%s  " DOT "  %s form  " DOT "  MadNLP with cuDSS on the GPU\n", BOLD, VERSION, RST, form);
     kv("solver", "%s", exe);
     kv("output", "%s", out);
     for (int k = 0; k < nopts; k++) kv("option", "%s", opts[k]);
@@ -1066,11 +1235,12 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     char formarg[64], outarg[8300];
     snprintf(formarg, sizeof formarg, "--form=%s", form);
     snprintf(outarg, sizeof outarg, "--output=%s", out);
-    char **cmd = xcalloc(4 + 2 * nopts + files.n, sizeof *cmd);
+    char **cmd = xcalloc(5 + 2 * nopts + files.n, sizeof *cmd);
     int n = 0;
     cmd[n++] = (char *)exe;
     cmd[n++] = formarg;
     cmd[n++] = outarg;
+    if (quiet) cmd[n++] = "--quiet";
     for (int k = 0; k < nopts; k++) { cmd[n++] = "--option"; cmd[n++] = opts[k]; }
     for (int i = 0; i < files.n; i++) cmd[n++] = files.v[i];
     cmd[n] = NULL;
@@ -1088,6 +1258,14 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     fflush(stdout);
     int rc = run(cmd);
     if (rc < 0) die("could not run %s", exe);
+    /* solution.json next to each solution.m, as the cpu backend writes it. */
+    for (int i = 0; i < files.n; i++) {
+        char nm[1024], sm[8400], js[8400];
+        case_name(files.v[i], nm, sizeof nm);
+        snprintf(sm, sizeof sm, "%s/%s/solution.m", out, nm);
+        snprintf(js, sizeof js, "%s/%s/solution.json", out, nm);
+        if (access(sm, R_OK) == 0 && write_solution_json(sm, js) != 0) case_error("could not write %s", js);
+    }
     return rc || failed ? 1 : 0;
 #endif
 }
@@ -1268,12 +1446,15 @@ static const char *usage =
     "usage: empower up           update empower to the latest release (same backends)\n"
     "       empower download     download the whole PGLib-OPF v" PGLIB_VERSION " library (typical, api, sad)\n"
     "       empower check        solve case14 with each installed backend\n"
+    "       empower json SOLUTION.m [OUT.json]\n"
+    "                            a solved case as JSON (as each run writes solution.json)\n"
     "       empower hsl [LINK|FILE|LIB]\n"
     "                            add HSL MA27 to the cpu backend: the download link from\n"
     "                            HSL's email (" MA27_URL "),\n"
     "                            the package, or an HSL library; asks when not given\n"
     "       empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
-    "                [--output=DIR] [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
+    "                [--output=DIR] [--time-limit=SECONDS] [--jobs=N] [--quiet]\n"
+    "                [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
     "\n"
@@ -1289,6 +1470,11 @@ static const char *usage =
     "               --options=\"tol=1e-8 max_iter=500\"; --options=@FILE reads one\n"
     "               \"NAME VALUE\" per line; may be repeated\n"
     "  --output     output directory (default ./empower-results)\n"
+    "  --time-limit wall-clock limit per case, in seconds (the solver's max_wall_time);\n"
+    "               a case that reaches it ends with status TIME_LIMIT\n"
+    "  -j, --jobs   solve up to N cases at a time, each in its own process (cpu only);\n"
+    "               a case's console output goes to <output>/<case>/console.log\n"
+    "  -q, --quiet  print only warnings, errors, one line per case, and the summary\n"
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
     "               $EMPOWER_HSL_LIB, or libhsl/libcoinhsl in /usr/local/lib and other\n"
@@ -1300,7 +1486,8 @@ static const char *usage =
     "  --model-lib  compiled ExaModelsPower library (default <install>/emp, from the release)\n"
     "\n"
     "For each case, writes <output>/<case>/solution.m (the solved case, in MATPOWER's\n"
-    "savecase format) and <output>/<case>/ipopt.log, and a row of <output>/summary.csv\n"
+    "savecase format), solution.json (PowerModels' result layout: per unit, radians),\n"
+    "violations.csv and the solver log, and a row of <output>/summary.csv\n"
     "(rewritten each run);\n"
     "<output>/system.txt records the machine, the libraries, and the command.\n";
 
@@ -1316,6 +1503,116 @@ static const char *flag(const char *a, const char *name, int *i, int argc, char 
     return NULL;
 }
 
+/* ------------------------------------------------------------------ --jobs */
+
+/* One line per finished case, for --quiet and --jobs. */
+static void progress(int k, int n, const char *name, const Result *r) {
+    int ok = r->st && (!strcmp(r->st, "LOCALLY_SOLVED") || !strcmp(r->st, "ALMOST_LOCALLY_SOLVED"));
+    if (!r->st) printf("  [%d/%d] %-32s %snot solved%s\n", k, n, name, RED, RST);
+    else
+        printf("  [%d/%d] %-32s %s%-22s%s objective %-14.8g %8.3f s\n", k, n, name, ok ? GREEN : RED,
+               r->st, RST, r->obj, r->t_build + r->t_solve);
+    fflush(stdout);
+}
+
+/* The data row of a worker's summary file, into r. Returns 0 when there is one. */
+static int read_worker_row(const char *path, char *row, size_t cap, Result *r) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 1;
+    char head[4096];
+    int got = fgets(head, sizeof head, f) && fgets(row, (int)cap, f);
+    fclose(f);
+    if (!got) return 1;
+    /* Fields after the case name, which may be quoted. */
+    const char *p = row;
+    if (*p == '"') {
+        for (p++; *p && !(*p == '"' && p[1] != '"'); p += (*p == '"') ? 2 : 1) {}
+        if (*p) p++;
+    } else
+        while (*p && *p != ',') p++;
+    char *fields[32];
+    int nf = 0;
+    static char copy[8192];
+    snprintf(copy, sizeof copy, "%s", *p == ',' ? p + 1 : p);
+    copy[strcspn(copy, "\r\n")] = 0;
+    for (char *s = copy; nf < 32;) {
+        fields[nf++] = s;
+        char *c = strchr(s, ',');
+        if (!c) break;
+        *c = 0;
+        s = c + 1;
+    }
+    if (nf < 12) return 1;
+    /* form,termination_status,raw_status,objective,iterations,nvar,ncon,build,solve,
+     * callbacks,ipopt,violation[,6 groups] */
+    r->st = strdup(fields[1]);
+    r->obj = atof(fields[3]);
+    r->iters = atoi(fields[4]);
+    r->n = atoi(fields[5]);
+    r->m = atoi(fields[6]);
+    r->t_build = atof(fields[7]);
+    r->t_solve = atof(fields[8]);
+    r->t_cb = atof(fields[9]);
+    r->viol = atof(fields[11]);
+    r->has_groups = nf >= 12 + NGROUPS && *fields[12];
+    for (int k = 0; k < NGROUPS && r->has_groups; k++) r->vg[k] = atof(fields[12 + k]);
+    return 0;
+}
+
+#ifdef _WIN32
+typedef intptr_t Proc;
+#else
+typedef pid_t Proc;
+#endif
+
+/* Start a program without waiting; returns 0 when it could not be started. */
+static Proc spawn_worker(char *const args[]) {
+#ifdef _WIN32
+    int n = 0;
+    while (args[n]) n++;
+    char **q = xmalloc((n + 1) * sizeof *q);
+    for (int i = 0; i < n; i++) {
+        size_t L = strlen(args[i]) + 3;
+        q[i] = xmalloc(L);
+        snprintf(q[i], L, "\"%s\"", args[i]);
+    }
+    q[n] = NULL;
+    intptr_t h = _spawnv(_P_NOWAIT, args[0], (const char *const *)q);
+    for (int i = 0; i < n; i++) free(q[i]);
+    free(q);
+    return h == -1 ? 0 : h;
+#else
+    pid_t pid;
+    return posix_spawnp(&pid, args[0], NULL, NULL, args, environ) == 0 ? pid : 0;
+#endif
+}
+
+/* Wait for one of the running workers to exit; returns its index in procs. */
+static int wait_worker(Proc *procs, int n) {
+#ifdef _WIN32
+    HANDLE h[MAXJOBS];
+    int idx[MAXJOBS], m = 0;
+    for (int k = 0; k < n; k++)
+        if (procs[k]) { h[m] = (HANDLE)procs[k]; idx[m++] = k; }
+    DWORD w = WaitForMultipleObjects(m, h, FALSE, INFINITE);
+    if (w >= WAIT_OBJECT_0 + (DWORD)m) die("waiting for the workers failed");
+    int k = idx[w - WAIT_OBJECT_0];
+    CloseHandle(h[w - WAIT_OBJECT_0]);
+    return k;
+#else
+    for (;;) {
+        int st;
+        pid_t p = waitpid(-1, &st, 0);
+        if (p < 0) {
+            if (errno == EINTR) continue;
+            die("waiting for the workers failed");
+        }
+        for (int k = 0; k < n; k++)
+            if (procs[k] == p) return k;
+    }
+#endif
+}
+
 int main(int argc, char **argv) {
     t_start = now();
     init_style();
@@ -1323,6 +1620,19 @@ int main(int argc, char **argv) {
     if (argc == 2 && (!strcmp(argv[1], "up") || !strcmp(argv[1], "update"))) return self_update();
     if ((argc == 2 || argc == 3) && !strcmp(argv[1], "hsl")) return add_hsl(argc == 3 ? argv[2] : NULL);
     if (argc == 2 && !strcmp(argv[1], "download")) return download_pglib();
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "json")) {
+        char out[8300];
+        if (argc == 4) snprintf(out, sizeof out, "%s", argv[3]);
+        else {
+            snprintf(out, sizeof out, "%s", argv[2]);
+            char *dot = strrchr(out, '.');
+            if (dot && !strchr(dot, '/')) *dot = 0;
+            strncat(out, ".json", sizeof out - strlen(out) - 1);
+        }
+        if (write_solution_json(argv[2], out) != 0) die("cannot read %s as a solved MATPOWER case", argv[2]);
+        printf("wrote %s\n", out);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "check")) {
 #ifdef _WIN32
         const char *self = under_root("bin/empower.exe");
@@ -1335,10 +1645,13 @@ int main(int argc, char **argv) {
                *hsllib = getenv("EMPOWER_HSL_LIB"),
                *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;
     List args = {0};
-    int check_hsl = 0;
+    int check_hsl = 0, jobs = 1;
+    const char *summary_csv = NULL, *log = NULL;
+    List pass = {0};   /* the options a --jobs worker gets as they are */
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
+        int i0 = i;
         if (!strcmp(a, "-h") || !strcmp(a, "--help")) {
             fputs(usage, stdout);
             return 0;
@@ -1347,6 +1660,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(a, "--check-hsl")) { check_hsl = 1; continue; }
+        if (!strcmp(a, "--quiet") || !strcmp(a, "-q")) { quiet = 1; continue; }
         if ((v = flag(a, "--form", &i, argc, argv))) form = v;
         else if ((v = flag(a, "--device", &i, argc, argv))) device = v;
         else if ((v = flag(a, "--solver", &i, argc, argv))) solver = v;
@@ -1355,8 +1669,40 @@ int main(int argc, char **argv) {
         else if ((v = flag(a, "--ipopt-lib", &i, argc, argv))) ipoptlib = v;
         else if ((v = flag(a, "--hsl-lib", &i, argc, argv))) hsllib = v;
         else if ((v = flag(a, "--model-lib", &i, argc, argv))) modellib = v;
+        else if ((v = flag(a, "--time-limit", &i, argc, argv))) {
+            char *e;
+            double t = strtod(v, &e);
+            if (*e || t <= 0) die("--time-limit needs a number of seconds, got %s", v);
+            /* A real number for Ipopt, which checks the option's type ("60.0", not "60"). */
+            char tl[64];
+            snprintf(tl, sizeof tl, "%.17g", t);
+            if (!strpbrk(tl, ".en")) strcat(tl, ".0");
+            add_opt("max_wall_time", tl);
+        }
+        else if ((v = flag(a, "--jobs", &i, argc, argv)) || (v = flag(a, "-j", &i, argc, argv))) {
+            jobs = atoi(v);
+            if (jobs < 1) die("--jobs needs a positive number, got %s", v);
+        }
+        /* For --jobs workers: where to write the summary row, and the console output. */
+        else if ((v = flag(a, "--summary-csv", &i, argc, argv))) { summary_csv = v; continue; }
+        else if ((v = flag(a, "--log", &i, argc, argv))) { log = v; continue; }
         else if (a[0] == '-') { fputs(usage, stderr); die("unknown option %s", a); }
-        else push(&args, a);
+        else { push(&args, a); continue; }
+        if (strcmp(a, "-j") && strncmp(a, "--jobs", 6) && strncmp(a, "--output", 8))
+            for (int k = i0; k <= i; k++) push(&pass, argv[k]);
+    }
+    if (log) {
+        int fd = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) die("cannot write %s", log);
+        fflush(stdout);
+        dup2(fd, 1);
+        dup2(fd, 2);
+        close(fd);
+#ifdef _WIN32
+        /* The Julia runtime writes to the Windows handles, not the C library's. */
+        SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE)_get_osfhandle(1));
+        SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(2));
+#endif
     }
     if (!args.n && !check_hsl) { fputs(usage, stderr); die("no case given"); }
     Ctx C = {0};
@@ -1376,7 +1722,10 @@ int main(int argc, char **argv) {
     if (!solver) solver = cuda ? "madnlp" : "ipopt";
     if (strcmp(solver, cuda ? "madnlp" : "ipopt"))
         die("--solver must be %s with --device=%s, got %s", cuda ? "madnlp" : "ipopt", device, solver);
-    if (cuda) return run_cuda(&args, form, out, argc, argv);
+    if (cuda) {
+        if (jobs > 1) die("--jobs is for --device=cpu; the cuda backend solves one case at a time on the GPU");
+        return run_cuda(&args, form, out, argc, argv);
+    }
     if (!modellib) modellib = under_root(MODEL_LIB);
     if (!modellib) die("no model library: pass --model-lib or set EMPOWER_MODEL_LIB");
     if (!ipoptlib) ipoptlib = under_root(IPOPT_LIB);
@@ -1390,7 +1739,7 @@ int main(int argc, char **argv) {
     C.hsllib = hsllib;
 
     char src[512];
-    printf("%sempower %s%s  " DOT "  %s form  " DOT "  Ipopt\n", BOLD, VERSION, RST, form);
+    if (!quiet) printf("%sempower %s%s  " DOT "  %s form  " DOT "  Ipopt\n", BOLD, VERSION, RST, form);
     kv("model", "%s", modellib);
     kv("ipopt", "%s", ipoptlib);
     if (read_source("ipopt", src, sizeof src)) kv("", "%s", src);
@@ -1404,6 +1753,9 @@ int main(int argc, char **argv) {
         if (!strcmp(args.v[i], "all")) add_all(&cases);
         else push(&cases, args.v[i]);
     }
+    if (jobs > cases.n) jobs = cases.n;
+    if (jobs > MAXJOBS) jobs = MAXJOBS;
+    if (jobs > 1) kv("jobs", "%d cases at a time, each in its own process (console output in <case>/console.log)", jobs);
 
     /* ExaModelsPower's __init__ otherwise creates a data directory next to its
      * source as it was at compile time, a path that only exists on the build
@@ -1435,7 +1787,7 @@ int main(int argc, char **argv) {
 
     /* Loading the model library starts its bundled Julia runtime. */
     double t0 = now();
-    if (!check_hsl) {
+    if (!check_hsl && jobs <= 1) {   /* --jobs: the workers load it */
         step("loading model library");
         C.hm = lib_open(modellib);
         if (!C.hm) die("cannot load model library %s: %s", modellib, lib_error());
@@ -1485,9 +1837,10 @@ int main(int argc, char **argv) {
     step("linear solver: %s", C.linear_solver);
 
     MKDIR(out);
-    write_system(out, ipoptlib, C.hsllib, argc, argv);
+    if (!summary_csv) write_system(out, ipoptlib, C.hsllib, argc, argv);
     char path[8192];
-    snprintf(path, sizeof path, "%s/summary.csv", out);
+    snprintf(path, sizeof path, "%s", summary_csv ? summary_csv : "");
+    if (!summary_csv) snprintf(path, sizeof path, "%s/summary.csv", out);
     /* A fresh summary per run: it describes this run only, like system.txt. */
     C.summary = fopen(path, "w");
     if (!C.summary) die("cannot write %s", path);
@@ -1501,17 +1854,120 @@ int main(int argc, char **argv) {
     Result *res = xcalloc(cases.n, sizeof *res);
     int *ok = xcalloc(cases.n, sizeof *ok);
     char **names = xcalloc(cases.n, sizeof *names);
-    for (int i = 0; i < cases.n; i++) {
-        char cf[8192], nm[1024];
-        heading("[%d/%d] %s", i + 1, cases.n, cases.v[i]);
-        fflush(stdout);
-        int st = resolve_case(cases.v[i], cf, sizeof cf);
-        case_name(st == 0 ? cf : cases.v[i], nm, sizeof nm);
-        names[i] = strdup(nm);
-        if (st == 0 && solve_case(&C, cf, out, &res[i]) == 0) { ok[i] = 1; solved++; }
-        else failed++;
+    if (jobs <= 1)
+        for (int i = 0; i < cases.n; i++) {
+            char cf[8192], nm[1024];
+            heading("[%d/%d] %s", i + 1, cases.n, cases.v[i]);
+            fflush(stdout);
+            int st = resolve_case(cases.v[i], cf, sizeof cf);
+            case_name(st == 0 ? cf : cases.v[i], nm, sizeof nm);
+            names[i] = strdup(nm);
+            if (st == 0 && solve_case(&C, cf, out, &res[i]) == 0) { ok[i] = 1; solved++; }
+            else failed++;
+            if (quiet && !summary_csv) progress(i + 1, cases.n, nm, &res[i]);
+        }
+    else {
+        /* --jobs: each case in a worker, `empower <case> --quiet` with this run's options,
+         * at most jobs at a time; the parent collects their summary rows. */
+        char jd[8400];
+        snprintf(jd, sizeof jd, "%s/.jobs", out);
+        MKDIR(jd);
+#ifdef _WIN32
+        const char *self = under_root("bin/empower.exe");
+#else
+        const char *self = under_root("bin/empower");
+#endif
+        if (!self) self = argv[0];
+        char lsopt[600];
+        int user_ls = 0;
+        for (int k = 0; k < nopts; k++) user_ls |= !strncmp(opts[k], "linear_solver=", 14);
+        /* The linear solver chosen here; the workers need not probe for MA27 again. */
+        snprintf(lsopt, sizeof lsopt, "--options=linear_solver=%s", C.linear_solver);
+        /* One thread per worker, for the BLAS that MUMPS uses: N workers on N cores. */
+#ifdef _WIN32
+        if (!getenv("OPENBLAS_NUM_THREADS")) _putenv_s("OPENBLAS_NUM_THREADS", "1");
+        if (!getenv("OMP_NUM_THREADS")) _putenv_s("OMP_NUM_THREADS", "1");
+#else
+        if (!getenv("OPENBLAS_NUM_THREADS")) setenv("OPENBLAS_NUM_THREADS", "1", 1);
+        if (!getenv("OMP_NUM_THREADS")) setenv("OMP_NUM_THREADS", "1", 1);
+#endif
+        Proc procs[MAXJOBS] = {0};
+        int slot_case[MAXJOBS], next = 0, running = 0, done = 0;
+        char **csvs = xcalloc(cases.n, sizeof *csvs);
+        while (next < cases.n || running) {
+            while (running < jobs && next < cases.n) {
+                int i = next++;
+                char cf[8192], nm[1024], buf[8600];
+                int st = resolve_case(cases.v[i], cf, sizeof cf);
+                case_name(st == 0 ? cf : cases.v[i], nm, sizeof nm);
+                names[i] = strdup(nm);
+                if (st != 0) { failed++; progress(++done, cases.n, nm, &res[i]); continue; }
+                snprintf(buf, sizeof buf, "%s/%s", out, nm);
+                MKDIR(buf);
+                char **cmd = xcalloc(pass.n + 8, sizeof *cmd);
+                int n = 0;
+                cmd[n++] = (char *)self;
+                cmd[n++] = strdup(cf);
+                snprintf(buf, sizeof buf, "--output=%s", out);
+                cmd[n++] = strdup(buf);
+                snprintf(buf, sizeof buf, "%s/%d.csv", jd, i);
+                csvs[i] = strdup(buf);
+                unlink(buf);
+                snprintf(buf, sizeof buf, "--summary-csv=%s", csvs[i]);
+                cmd[n++] = strdup(buf);
+                snprintf(buf, sizeof buf, "--log=%s/%s/console.log", out, nm);
+                cmd[n++] = strdup(buf);
+                cmd[n++] = "--quiet";
+                if (!user_ls) cmd[n++] = lsopt;
+                for (int k = 0; k < pass.n; k++) cmd[n++] = pass.v[k];
+                cmd[n] = NULL;
+                int slot = 0;
+                while (procs[slot]) slot++;
+                fflush(stdout);
+                procs[slot] = spawn_worker(cmd);
+                if (!procs[slot]) die("could not run %s", self);
+#ifndef _WIN32
+                workers[slot] = procs[slot];
+                if (running == 0) {   /* Ctrl-C kills the workers too */
+                    struct sigaction sa;
+                    memset(&sa, 0, sizeof sa);
+                    sa.sa_handler = on_signal;
+                    sigemptyset(&sa.sa_mask);
+                    sigaction(SIGINT, &sa, NULL);
+                    sigaction(SIGTERM, &sa, NULL);
+                    sigaction(SIGHUP, &sa, NULL);
+                }
+#endif
+                slot_case[slot] = i;
+                running++;
+            }
+            if (!running) break;
+            int slot = wait_worker(procs, jobs);
+            int i = slot_case[slot];
+            procs[slot] = 0;
+#ifndef _WIN32
+            workers[slot] = 0;
+#endif
+            running--;
+            char row[8192];
+            if (read_worker_row(csvs[i], row, sizeof row, &res[i]) == 0) {
+                fputs(row, C.summary);
+                if (!strchr(row, '\n')) fputc('\n', C.summary);
+                if (!strcmp(res[i].st, "LOCALLY_SOLVED") || !strcmp(res[i].st, "ALMOST_LOCALLY_SOLVED")) {
+                    ok[i] = 1;
+                    solved++;
+                } else failed++;
+                unlink(csvs[i]);
+            } else {
+                memset(&res[i], 0, sizeof res[i]);
+                failed++;
+            }
+            progress(++done, cases.n, names[i], &res[i]);
+        }
+        rmdir(jd);
     }
     fclose(C.summary);
+    if (summary_csv) return failed ? 1 : 0;
 
     /* The runs at a glance, as a table; the full record is summary.csv. */
     enum { NCOL = 9 };
@@ -1525,7 +1981,7 @@ int main(int argc, char **argv) {
             snprintf(v[1], 64, "not solved");
             for (int k = 2; k < NCOL; k++) snprintf(v[k], 64, "-");
         } else {
-            snprintf(v[1], 64, "%s", termination_status(r->status));
+            snprintf(v[1], 64, "%s", r->st);
             snprintf(v[2], 64, "%.8g", r->obj);
             snprintf(v[3], 64, "%.2e", r->viol);
             snprintf(v[4], 64, "%d", r->iters);
