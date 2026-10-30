@@ -2,6 +2,11 @@
 
 Solve AC and DC optimal power flow problems with [ExaModelsPower.jl](https://github.com/madsuite-org/ExaModelsPower.jl) models compiled ahead of time: with Ipopt on the CPU, or with MadNLP and cuDSS on an NVIDIA GPU (see [Backends](#backends)). No Julia installation is needed. (empower was called opfsolve before v0.6.0.)
 
+- AC OPF (polar or rectangular voltages) and DC OPF, for MATPOWER files and PGLib-OPF cases by name
+- On the CPU (Ipopt with HSL MA27) or on an NVIDIA GPU (MadNLP with cuDSS)
+- The solution as a solved MATPOWER case and as JSON, with violations by constraint group and a CSV summary of status, objective and times
+- From the command line (many cases in parallel, time limits), and from C, C++ and Python
+
 On the CPU, empower uses the HSL MA27 linear solver, which you download yourself under HSL's free personal licence: request it at https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/ (about 2 minutes), and HSL emails a download link, valid for 7 days, which the installer asks for. An HSL library already on the machine is found and offered instead. Press Enter to skip HSL for now; Ipopt then uses MUMPS, and `empower hsl` adds MA27 later (see [HSL MA27](#hsl-ma27)).
 
 Linux and macOS (Apple silicon):
@@ -19,6 +24,7 @@ irm https://raw.githubusercontent.com/madsuite-org/empower/main/install.ps1 | ie
 The installer works like juliaup's. It shows the install directory, asks for confirmation (`-y` accepts the defaults), and installs into `~/.empower`:
 
 - `bin/empower` and the compiled ExaModelsPower model library for your platform,
+- the C API (`include/empower.h`, `lib/libempower`) and the Python package (`python/`; see [C, C++ and Python](#c-c-and-python)),
 - Ipopt 3.14 from [conda-forge](https://anaconda.org/conda-forge/ipopt), installed with [micromamba](https://github.com/mamba-org/micromamba-releases),
 - HSL MA27: compiled with `-O3` on your machine from your own licensed copy, or an HSL library you already have,
 - on Linux with an NVIDIA GPU (or with `--backends=cpu,cuda`), the GPU solver and the NVIDIA libraries it uses (see [Backends](#backends)).
@@ -79,7 +85,7 @@ empower case14_ieee case118_ieee mycase.m --form=polar --solver=ipopt --options=
   └────────────────────────┴────────────────┴───────────┴──────────┴──────┴───────┴───────┴───────┴───────┴─────────┴───────┘
 ```
 
-A second table gives the violations by group (see `violations.csv` below). `max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu); Times are in seconds: `build` parses the case and builds the model; `solve` is split into `evals` (the model's functions and derivatives), `lin alg` (the linear solver: MA27 or MUMPS, from Ipopt's timing statistics; cuDSS on the GPU) and `other` (the rest of the solver); `init`, part of `solve`, is the time to the first iteration (MadNLP's initialization on the GPU). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
+A second table gives the violations by group (see `violations.csv` below). `max viol` is the largest absolute constraint violation at the solution, max(cl - c(x), c(x) - cu). Times are in seconds: `build` parses the case and builds the model; `solve` is split into `evals` (the model's functions and derivatives), `lin alg` (the linear solver: MA27 or MUMPS, from Ipopt's timing statistics; cuDSS on the GPU) and `other` (the rest of the solver); `init`, part of `solve`, is the time to the first iteration (MadNLP's initialization on the GPU). On a terminal the status is coloured; set `NO_COLOR` to turn colours off.
 
 To update to the latest release, run `empower up` (or `empower update`). It runs the installer again into the same directory, for the backends you have installed, keeping your HSL library and leaving your shell startup files alone.
 
@@ -102,8 +108,11 @@ empower_close(e);
 cc -I ~/.empower/include app.c -L ~/.empower/lib -lempower -Wl,-rpath,$HOME/.empower/lib
 ```
 
+```sh
+pip install ~/.empower/python     # once; the package finds the install in EMPOWER_DIR, or ~/.empower
+```
+
 ```python
-import sys; sys.path.insert(0, "/home/me/.empower/python")   # or: pip install ~/.empower/python
 import empower
 r = empower.solve("case118_ieee", form="polar", device="cpu", options={"tol": 1e-8}, time_limit=60)
 r.status, r.objective, r.bus["vm"], r.gen["pg"], r.branch["pf"]   # numpy arrays if numpy is installed
@@ -180,9 +189,10 @@ No system packages are needed: conda-forge supplies Ipopt's Fortran runtime and 
 
 - `emp/lib/libemp.so` (`emp/lib/libemp.dylib` on macOS, `emp/bin/libemp.dll` on Windows) holds the ExaModelsPower recipes `acp` (polar), `acr` (rectangular) and `dcp` (DC), with ExaModelsPower's MATPOWER writer, compiled by `ExaModelsCompiler.compile_all(ExaModelsPower)` with `juliac --trim=safe` into one shared library with a private Julia runtime. It implements the [cnlp ABI](https://github.com/madsuite-org/cnlp-abi): given a MATPOWER path it parses the case, builds the model, and evaluates the objective, constraints, and their derivatives.
 - `bin/empower` is a C program that loads the model library and Ipopt at run time and connects them through Ipopt's C interface.
+- `lib/libempower` is the same source (`driver/empower.c`) built with `-DEMPOWER_LIB`: the C API in `driver/empower.h`, which runs `bin/empower` for each solve and reads the solution back. `python/` is the Python package, which does the same.
 - `cuda/bin/empower-cuda` (the `cuda` backend) is `gpu/EmpowerGPU`, which builds the ExaModelsPower model on the GPU and solves it with MadNLP and cuDSS, compiled by `juliac` with its Julia runtime; `bin/empower --device=cuda` runs it. `tools/build-cuda.sh 12` builds it on a machine with an NVIDIA GPU, and `tools/test-cuda.sh 12` installs it and checks the solutions, and that a run, on a file and on a terminal, compiles nothing.
 
-`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh` and solves case14 and case118 with each formulation. The `Release` workflow builds and tests every platform on each push, the `cuda` archive on a self-hosted runner with an NVIDIA GPU. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 14 and 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` falls back to MUMPS with its warning without HSL; the HSL build is tested by hand.
+`tools/build.sh <plat>` builds `empower-<plat>.tar.gz` (Julia 1.12.7 and a C compiler are needed), including `locks/`: explicit conda-forge lock files (`tools/lock.sh`) with which the installer creates the Ipopt and compiler environments without downloading conda-forge's index or solving, so every install of a release gets the same packages; and `tools/test.sh <plat>` installs it with `install.sh`, solves case14 and case118 with each formulation, and runs the C API and Python package tests (`tools/api/`). The `Release` workflow builds and tests every platform on each push, the `cuda` archive on a self-hosted runner with an NVIDIA GPU. On a `v*` tag it checks that the tag matches the version in `driver/empower.c` and has a `CHANGELOG.md` entry, then publishes the archives with `SHA256SUMS`, build provenance attestations, and the corresponding source of the bundled GPL and LGPL libraries. After publishing, it runs the one-line installers against the release, then `empower` from a new shell, on Ubuntu 22.04 and 24.04 (x86_64 and arm64), macOS 15, Windows Server 2022 and 2025, Rocky Linux 8 and 9, Fedora, Debian 12, and Ubuntu 20.04. A further job installs twice into a directory with a space, checks the PATH block, solves from a new shell, and uninstalls. CI has no HSL licence, so it installs with `-y` and `EMPOWER_SKIP_HSL=1` (a switch for testing only), solves with `linear_solver=mumps`, and checks that `empower` falls back to MUMPS with its warning without HSL; the HSL build is tested by hand.
 
 ## License
 
