@@ -38,6 +38,11 @@ for f in polar rect dc; do
         grep -qi "linear solver mumps" "$f/$c/ipopt.log"
     done
 done
+# --start: from the solution of the same case, in fewer iterations.
+"$op" case118_ieee --options=linear_solver=mumps --output=warm --start=polar/pglib_opf_case118_ieee/solution.m -q
+awk -F, 'NR == 2 { exit !($3 == "LOCALLY_SOLVED") }' warm/summary.csv
+cold=$(awk -F, 'NR == 3 { print $6 }' polar/summary.csv); warm=$(awk -F, 'NR == 2 { print $6 }' warm/summary.csv)
+echo "case118 iterations: cold $cold, warm $warm"; test "$warm" -le "$cold"
 # empower json: the same file from a solution.m.
 "$op" json polar/pglib_opf_case118_ieee/solution.m again.json
 cmp again.json polar/pglib_opf_case118_ieee/solution.json

@@ -47,7 +47,7 @@ Installer options (after `sh -s --`): `-y` (no prompts), `--path DIR` (install d
 
 ```
 empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--options="NAME=VALUE ..."] [--output=DIR]
-                  [--time-limit=SECONDS] [--jobs=N] [--quiet]
+                  [--time-limit=SECONDS] [--jobs=N] [--quiet] [--start=SOLUTION.m]
 empower json SOLUTION.m [OUT.json]   a solved case as JSON (each run writes solution.json)
 empower up                     update to the latest release, for the backends installed
 empower hsl [LINK|FILE|LIB]    add HSL MA27: the link from HSL's email, the package, or a library
@@ -65,6 +65,7 @@ empower check                  solve case14 with each installed backend (the ins
 | `--output` | Output directory (default `./empower-results`). |
 | `--time-limit` | Wall-clock limit per case, in seconds (the solver's `max_wall_time`). A case that reaches it ends with status `TIME_LIMIT`. |
 | `-j`, `--jobs` | Solve up to N cases at a time, each in its own process (`--device=cpu` only). Each case's console output goes to `<case>/console.log`; the console shows a line per finished case and the summary. Each process solves with one thread, so N up to the number of physical cores is reasonable. |
+| `--start` | Start from the bus voltages and generator dispatch of `SOLUTION.m`, a solved case of the same network (such as `<case>/solution.m` of an earlier run, or the case with a changed load); the branch flows keep the default start. One case at a time. |
 | `-q`, `--quiet` | Print only warnings, errors, one line per case, and the summary. The solver logs are written in full either way. |
 | `--hsl-lib` | HSL library to use (default `~/.empower/hsl`, or `EMPOWER_HSL_LIB`, or `libhsl`/`libcoinhsl` in `/usr/local/lib` and the other standard library directories). |
 | `--ipopt-lib`, `--model-lib` | Use another Ipopt (3.14 or later) or model library. |
@@ -115,6 +116,8 @@ pip install ~/.empower/python     # once; the package finds the install in EMPOW
 ```python
 import empower
 r = empower.solve("case118_ieee", form="polar", device="cpu", options={"tol": 1e-8}, time_limit=60)
+r = empower.solve("case118_ieee", output="out")                                  # keep the files,
+r2 = empower.solve("case118_ieee", start=r.dir + "/solution.m")                  # and warm-start from them
 r.status, r.objective, r.bus["vm"], r.gen["pg"], r.branch["pf"]   # numpy arrays if numpy is installed
 ```
 

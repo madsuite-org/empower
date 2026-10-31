@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "empower"
-version = "0.10.0"
+version = "0.10.1"
 description = "AC and DC optimal power flow with empower (compiled ExaModelsPower, Ipopt, MadNLP)"
 readme = "README.md"
 requires-python = ">=3.8"

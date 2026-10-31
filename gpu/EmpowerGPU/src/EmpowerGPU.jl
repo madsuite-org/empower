@@ -230,11 +230,16 @@ function measured(f)
     return r
 end
 
-function solve_case(file, form, out, opts, summary)
+function solve_case(file, form, out, opts, summary, start = "")
     name = casename(file)
     dir = mkpath(joinpath(out, name))
     t0 = time()
     model, vars, cons = opf_model(file; form = FORMS[form], backend = CUDABackend())
+    if !isempty(start)
+        # The bus voltages and generator dispatch of a solved case of the same network.
+        copyto!(model.meta.x0, case_start(start, model))
+        step("starting from ", start, " (bus voltages and generator dispatch)")
+    end
     t_build = time() - t0
     step("model: ", model.meta.nvar, " variables, ", model.meta.ncon, " constraints (",
             round(t_build; digits = 3), " s)")
@@ -308,7 +313,7 @@ function run(args::Vector{String})::Cint
     # executable still compiles on first use.
     get(ENV, "EMPOWER_TRACE_COMPILE", "") == "1" &&
         ccall(:jl_force_trace_compile_timing_enable, Cvoid, ())
-    form, out, opts, files = "polar", "empower-results", Pair{Symbol,Any}[], String[]
+    form, out, opts, files, start = "polar", "empower-results", Pair{Symbol,Any}[], String[], ""
     i = 1
     while i <= length(args)
         a = args[i]
@@ -318,6 +323,8 @@ function run(args::Vector{String})::Cint
             out = a[10:end]
         elseif a == "--quiet"
             QUIET[] = true
+        elseif startswith(a, "--start=")
+            start = a[9:end]
         elseif a == "--option" && i < length(args)
             push!(opts, option(args[i += 1]))
         else
@@ -355,7 +362,7 @@ function run(args::Vector{String})::Cint
             heading(string("[", k, "/", length(files), "] ", casename(f)))
             step("case ", f)
             try
-                push!(results, measured(() -> profiled(() -> solve_case(f, form, out, opts, summary), k)))
+                push!(results, measured(() -> profiled(() -> solve_case(f, form, out, opts, summary, start), k)))
                 QUIET[] && progress(k, length(files), results[end])
             catch err
                 # Ctrl-C ends the run; it is not this case's error.
@@ -409,6 +416,8 @@ end
                      "--option", "tol=1e-8", "--option", "max_iter=3000", case])
                 # --quiet, with a time limit (--time-limit).
                 run(["--form=$form", "--output=$out", "--quiet", "--option", "max_wall_time=3600.0", case])
+                # --start, from the solution just written.
+                run(["--form=$form", "--output=$out", "--start=" * joinpath(out, "pglib_opf_case14_ieee", "solution.m"), case])
             end
         end
         rm(out; recursive = true)

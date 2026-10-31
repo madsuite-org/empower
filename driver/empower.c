@@ -57,7 +57,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.10.0"
+#define VERSION "0.10.1"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -417,6 +417,10 @@ typedef struct {
      * the largest violation of each group of constraints and bounds, as CSV. */
     int32_t (*write_violations)(int32_t, const char *, const double *, const double *,
                                 const double *, const double *, double, const char *);
+    /* Its start writer (ExaModelsPower 0.4.6 and newer; NULL in older libraries): the
+     * starting point taken from the instance's case file, one number per line. */
+    int32_t (*write_start)(int32_t, const char *, const double *, const double *,
+                           const double *, const double *, double, const char *);
     int32_t id;
     long nfev, ngev, nconsev, njev, nhev, iters;
     double tfev, tgev, tconsev, tjev, thev;
@@ -441,6 +445,8 @@ static void load_model(Model *M, void *h, const char *p) {
     char wv[256];
     snprintf(wv, sizeof wv, "%s_write_violations", p);
     M->write_violations = lib_sym(h, wv);
+    snprintf(wv, sizeof wv, "%s_write_start", p);
+    M->write_start = lib_sym(h, wv);
 }
 
 /* The groups ExaModelsPower's violations writer reports, in its order, and the short
@@ -788,6 +794,7 @@ typedef struct {
     Ipopt I;
     void *hm;
     FILE *summary;
+    const char *start;   /* --start: a solved case to start from, or NULL */
 } Ctx;
 
 typedef struct {
@@ -984,6 +991,36 @@ static double linear_algebra_time(const char *log) {
     return found ? t : NAN;
 }
 
+/* --start: x takes the bus voltages and generator dispatch of the solved case start, through
+ * the model library's start writer run on an instance built from that case (ExaModelsPower's
+ * case_start); the other variables keep the model's start. */
+static int apply_start(Model *M, const char *start, const char *dir, double *x, int n) {
+    if (!M->write_start)
+        return case_error("--start needs a model library with a start writer (empower 0.10.1 or newer)");
+    int32_t sid = M->new_str(start);
+    if (sid <= 0) return case_error("the model library could not read %s", start);
+    int sn = M->nvar(sid), sm = M->ncon(sid);
+    if (sn != n)
+        return case_error("%s has a different network (%d variables, against %d)", start, sn, n);
+    double *zx = xcalloc(sn, sizeof *zx), *zy = xcalloc(sm, sizeof *zy);
+    char path[8400];
+    snprintf(path, sizeof path, "%s/start.txt", dir);
+    int ok = M->write_start(sid, path, zx, zy, zx, zx, 0, "") == 0;
+    free(zx);
+    free(zy);
+    if (!ok) return case_error("could not take the starting point from %s", start);
+    FILE *f = fopen(path, "r");
+    int k = 0;
+    if (f) {
+        while (k < n && fscanf(f, "%lf", &x[k]) == 1) k++;
+        fclose(f);
+    }
+    unlink(path);
+    if (k != n) return case_error("could not read the starting point from %s", start);
+    step("starting from %s (bus voltages and generator dispatch)", start);
+    return 0;
+}
+
 static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result *r) {
     double t_case = now();
     char name[1024], out[8192], path[8400];
@@ -1019,6 +1056,7 @@ static int solve_case(Ctx *C, const char *casefile, const char *outroot, Result 
         if (gl[i] < -1e20) gl[i] = -1e20;
         if (gu[i] > 1e20) gu[i] = 1e20;
     }
+    if (C->start && apply_start(&M, C->start, out, x, n) != 0) { rc = -1; goto done; }
 
     P = I->create(n, xl, xu, m, gl, gu, nnzj, nnzh, 1, eval_f, eval_g, eval_grad, eval_jac, eval_h);
     if (!P) { rc = case_error("CreateIpoptProblem failed"); goto done; }
@@ -1299,9 +1337,9 @@ static unsigned long long cgroup_memory_limit(void) {
 
 /* --device=cuda: resolve the cases here, then solve them all in one run of empower-cuda,
  * which writes the same files. */
-static int run_cuda(List *args, const char *form, const char *out, int argc, char **argv) {
+static int run_cuda(List *args, const char *form, const char *out, const char *start, int argc, char **argv) {
 #if defined(_WIN32) || defined(__APPLE__)
-    (void)args; (void)form; (void)out; (void)argc; (void)argv;
+    (void)args; (void)form; (void)out; (void)start; (void)argc; (void)argv;
     die("--device=cuda is available on Linux x86_64 only");
 #else
     const char *exe = under_root("cuda/bin/empower-cuda");
@@ -1346,12 +1384,17 @@ static int run_cuda(List *args, const char *form, const char *out, int argc, cha
     char formarg[64], outarg[8300];
     snprintf(formarg, sizeof formarg, "--form=%s", form);
     snprintf(outarg, sizeof outarg, "--output=%s", out);
-    char **cmd = xcalloc(5 + 2 * nopts + files.n, sizeof *cmd);
+    char **cmd = xcalloc(6 + 2 * nopts + files.n, sizeof *cmd);
     int n = 0;
     cmd[n++] = (char *)exe;
     cmd[n++] = formarg;
     cmd[n++] = outarg;
     if (quiet) cmd[n++] = "--quiet";
+    char startarg[8300];
+    if (start) {
+        snprintf(startarg, sizeof startarg, "--start=%s", start);
+        cmd[n++] = startarg;
+    }
     for (int k = 0; k < nopts; k++) { cmd[n++] = "--option"; cmd[n++] = opts[k]; }
     for (int i = 0; i < files.n; i++) cmd[n++] = files.v[i];
     cmd[n] = NULL;
@@ -1564,7 +1607,7 @@ static const char *usage =
     "                            HSL's email (" MA27_URL "),\n"
     "                            the package, or an HSL library; asks when not given\n"
     "       empower <case>... [--form=polar|rect|dc] [--device=cpu|cuda] [--solver=ipopt] [--options=\"NAME=VALUE ...\"]\n"
-    "                [--output=DIR] [--time-limit=SECONDS] [--jobs=N] [--quiet]\n"
+    "                [--output=DIR] [--time-limit=SECONDS] [--jobs=N] [--quiet] [--start=SOLUTION.m]\n"
     "                [--hsl-lib=PATH] [--ipopt-lib=PATH] [--model-lib=PATH]\n"
     "\n"
     "Solves the AC (or DC) optimal power flow problem for one or more MATPOWER cases.\n"
@@ -1586,6 +1629,8 @@ static const char *usage =
     "  -j, --jobs   solve up to N cases at a time, each in its own process (cpu only);\n"
     "               a case's console output goes to <output>/<case>/console.log\n"
     "  -q, --quiet  print only warnings, errors, one line per case, and the summary\n"
+    "  --start      start from the bus voltages and generator dispatch of SOLUTION.m, a\n"
+    "               solved case of the same network (such as <case>/solution.m); one case\n"
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
     "               $EMPOWER_HSL_LIB, or libhsl/libcoinhsl in /usr/local/lib and other\n"
@@ -2005,7 +2050,7 @@ int main(int argc, char **argv) {
                *form = "polar", *solver = NULL, *device = NULL, *out = "empower-results", *v;
     List args = {0};
     int check_hsl = 0, jobs = 1;
-    const char *summary_csv = NULL, *log = NULL;
+    const char *summary_csv = NULL, *log = NULL, *start = NULL;
     List pass = {0};   /* the options a --jobs worker gets as they are */
 
     for (int i = 1; i < argc; i++) {
@@ -2042,6 +2087,10 @@ int main(int argc, char **argv) {
             jobs = atoi(v);
             if (jobs < 1) die("--jobs needs a positive number, got %s", v);
         }
+        else if ((v = flag(a, "--start", &i, argc, argv))) {
+            if (access(v, R_OK) != 0) die("--start: cannot read %s", v);
+            start = v;
+        }
         /* For --jobs workers: where to write the summary row, and the console output. */
         else if ((v = flag(a, "--summary-csv", &i, argc, argv))) { summary_csv = v; continue; }
         else if ((v = flag(a, "--log", &i, argc, argv))) { log = v; continue; }
@@ -2064,6 +2113,7 @@ int main(int argc, char **argv) {
 #endif
     }
     if (!args.n && !check_hsl) { fputs(usage, stderr); die("no case given"); }
+    if (start && (args.n != 1 || !strcmp(args.v[0], "all"))) die("--start goes with one case");
     Ctx C = {0};
     C.form = form;
     if (!strcmp(form, "polar")) C.model = "acp";
@@ -2083,7 +2133,7 @@ int main(int argc, char **argv) {
         die("--solver must be %s with --device=%s, got %s", cuda ? "madnlp" : "ipopt", device, solver);
     if (cuda) {
         if (jobs > 1) die("--jobs is for --device=cpu; the cuda backend solves one case at a time on the GPU");
-        return run_cuda(&args, form, out, argc, argv);
+        return run_cuda(&args, form, out, start, argc, argv);
     }
     if (!modellib) modellib = under_root(MODEL_LIB);
     if (!modellib) die("no model library: pass --model-lib or set EMPOWER_MODEL_LIB");
@@ -2096,6 +2146,7 @@ int main(int argc, char **argv) {
     if (!hsllib && (hsllib = system_hsl()) != NULL) hsl_system = 1;
     if (hsllib && access(hsllib, R_OK) != 0) die("HSL library not found: %s", hsllib);
     C.hsllib = hsllib;
+    C.start = start;
 
     char src[512];
     if (!quiet) printf("%sempower %s%s  " DOT "  %s form  " DOT "  Ipopt\n", BOLD, VERSION, RST, form);

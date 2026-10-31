@@ -34,6 +34,11 @@ awk -F, 'FNR > 1 {
     for (k = NF - 6; k <= NF; k++)
         if ($k == "" || $k > 1e-5) { print "violation (column " k "): " $0; bad = 1 }
 } END { exit bad }' polar/summary.csv rect/summary.csv dc/summary.csv
+# --start: from the solution of the same case.
+"$op" case118_ieee --device=cuda --output=warm --start=polar/pglib_opf_case118_ieee/solution.m -q
+awk -F, 'NR == 2 { exit !($3 == "LOCALLY_SOLVED") }' warm/summary.csv
+cold=$(awk -F, 'NR == 3 { print $6 }' polar/summary.csv); warm=$(awk -F, 'NR == 2 { print $6 }' warm/summary.csv)
+echo "case118 iterations on the GPU: cold $cold, warm $warm"; test "$warm" -le "$cold"
 # The C API and the Python package, on the GPU.
 cc -I"$t/empower/include" -o api-test "$root/tools/api/test.c" -L"$t/empower/lib" -lempower -lm -Wl,-rpath,"$t/empower/lib"
 ./api-test cuda

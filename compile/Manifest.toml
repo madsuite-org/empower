@@ -99,9 +99,9 @@ version = "0.1.2"
 
 [[deps.ExaModelsPower]]
 deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PowerIO", "PrecompileTools"]
-git-tree-sha1 = "aa50a3495531364ebcb323948c585531515b5329"
+git-tree-sha1 = "a9c69b061c2f880132ffb612ec686de57928b5d5"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
-version = "0.4.5"
+version = "0.4.6"
 
     [deps.ExaModelsPower.extensions]
     ExaModelsPowerAMDGPUExt = ["AMDGPU", "ExaModels", "KernelAbstractions"]

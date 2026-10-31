@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 __all__ = ["solve", "Result", "EmpowerError", "install_dir", "version"]
 
@@ -118,13 +118,15 @@ def _read_matpower(path):
     return mc
 
 
-def _run(case, form, device, options, output):
+def _run(case, form, device, options, output, start):
     exe = _exe()
     out = output or tempfile.mkdtemp(prefix="empower-")
     try:
         cmd = [exe, str(case), "--device=" + device, "--form=" + form, "--output=" + out, "--quiet"]
         if options:
             cmd.append("--options=" + options)
+        if start:
+            cmd.append("--start=" + os.fspath(start))
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         rows = []
         summary = os.path.join(out, "summary.csv")
@@ -161,7 +163,7 @@ def _run(case, form, device, options, output):
             shutil.rmtree(out, ignore_errors=True)
 
 
-def solve(case, form="polar", device="cpu", options=None, time_limit=None, output=None):
+def solve(case, form="polar", device="cpu", options=None, time_limit=None, output=None, start=None):
     """Solve the optimal power flow problem of a case.
 
     case: a MATPOWER file, or a PGLib-OPF case name ("case118_ieee"), downloaded on first
@@ -169,6 +171,8 @@ def solve(case, form="polar", device="cpu", options=None, time_limit=None, outpu
     "cuda" (MadNLP with cuDSS). options:
     solver options, {"tol": 1e-8, "max_iter": 500}. time_limit: seconds. output: a
     directory to keep the case's files in (solution.m, solution.json, the solver log).
+    start: a solved case of the same network (such as a Result's dir + "/solution.m") whose
+    bus voltages and generator dispatch the solve starts from.
 
     Every array is in the order of the case file's tables; out-of-service generators and
     branches have zeros.
@@ -180,4 +184,4 @@ def solve(case, form="polar", device="cpu", options=None, time_limit=None, outpu
         os.makedirs(output, exist_ok=True)
     if device not in ("cpu", "cuda"):
         raise ValueError("device must be cpu or cuda, got %r" % device)
-    return _run(case, form, device, opts, output)
+    return _run(case, form, device, opts, output, start)
