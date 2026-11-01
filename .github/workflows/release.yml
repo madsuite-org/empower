@@ -151,10 +151,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: empower-linux-x86_64
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: empower-cuda${{ matrix.cuda }}-linux-x86_64
       - name: Test
@@ -175,7 +175,7 @@ jobs:
           v=$(sed -n 's/^#define VERSION "\(.*\)"$/\1/p' driver/empower.c)
           test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but driver/empower.c says $v"; exit 1; }
           grep -q "^## v$v" CHANGELOG.md || { echo "CHANGELOG.md has no entry for v$v"; exit 1; }
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
