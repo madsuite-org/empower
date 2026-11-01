@@ -52,7 +52,7 @@ jobs:
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: empower-${{ matrix.plat }}
           path: empower-${{ matrix.plat }}.tar.gz
@@ -80,7 +80,7 @@ jobs:
         run: tools/build.sh "${{ matrix.plat }}"
       - name: Test
         run: tools/test.sh "${{ matrix.plat }}"
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: empower-${{ matrix.plat }}
           path: empower-${{ matrix.plat }}.tar.gz
@@ -103,7 +103,7 @@ jobs:
       - name: Test
         shell: pwsh
         run: tools/test.ps1
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: empower-windows-x86_64
           path: empower-windows-x86_64.tar.gz
@@ -135,7 +135,7 @@ jobs:
           JULIA_DEPOT_PATH: "/home/action-runner/depots/empower-cuda${{ matrix.cuda }}:"
         run: tools/build-cuda.sh ${{ matrix.cuda }}
       # Uploaded before it is tested, so a build whose test fails can still be examined.
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: empower-cuda${{ matrix.cuda }}-linux-x86_64
           path: empower-cuda${{ matrix.cuda }}-linux-x86_64.tar.gz
