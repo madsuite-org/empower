@@ -12,7 +12,7 @@ On the CPU, empower uses the HSL MA27 linear solver, which you download yourself
 Linux and macOS (Apple silicon):
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh
+curl -fsSL https://empower.madsuite.org/install | sh
 ```
 
 Windows (PowerShell):
@@ -143,7 +143,7 @@ On the CPU, empower uses MA27. Its licence is free for personal use, but `empowe
 2. Run the installer. Without `--hsl`, it opens the request page in your browser (where there is a desktop) and waits for you to paste the link from the email. Or pass the link with `--hsl` (`EMPOWER_HSL` on Windows). The installer downloads the package and compiles MA27 with `-O3` into `~/.empower/hsl/`. It uses your `gfortran` if you have one (or the compiler in `EMPOWER_FC`); otherwise it downloads gfortran from conda-forge. The compiler download and the compile run in the background while Ipopt installs, and the compiler is removed afterwards. Either way it checks that Ipopt can use the result:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh -s -- --hsl='<download link>'
+curl -fsSL https://empower.madsuite.org/install | sh -s -- --hsl='<download link>'
 ```
 
 ```powershell
@@ -166,7 +166,7 @@ The installer's `--backends` selects the solvers to install, comma-separated. Wi
 | `cuda` | MadNLP with NVIDIA cuDSS, on an NVIDIA GPU | Linux x86_64, with an NVIDIA driver for CUDA 12.8 or newer |
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/madsuite-org/empower/main/install.sh | sh -s -- --backends=cpu,cuda
+curl -fsSL https://empower.madsuite.org/install | sh -s -- --backends=cpu,cuda
 empower case118_ieee --device=cuda
 ```
 
