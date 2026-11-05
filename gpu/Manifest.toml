@@ -290,9 +290,9 @@ version = "0.14.2"
 
 [[deps.ExaModelsPower]]
 deps = ["DelimitedFiles", "ExaModels", "ExaPowerIO", "JSON", "PowerIO", "PrecompileTools"]
-git-tree-sha1 = "a9c69b061c2f880132ffb612ec686de57928b5d5"
+git-tree-sha1 = "60739b1422b9a54de3804c377365dee957bb5a3b"
 uuid = "2fff4b78-0b6c-428d-bac8-85ccea8c4bdf"
-version = "0.4.6"
+version = "0.4.7"
 
     [deps.ExaModelsPower.extensions]
     ExaModelsPowerAMDGPUExt = ["AMDGPU", "ExaModels", "KernelAbstractions"]
@@ -611,8 +611,8 @@ version = "0.5.16"
 
 [[deps.MadNLP]]
 deps = ["LDLFactorizations", "LinearAlgebra", "Logging", "MUMPS_seq_jll", "NLPModels", "OpenBLAS32_jll", "Pkg", "PrecompileTools", "Printf", "SolverCore", "SparseArrays", "SuiteSparse"]
-git-tree-sha1 = "62474cf9aab2c865584513a2be75e2bfe6ce448e"
-repo-rev = "dd950f00"
+git-tree-sha1 = "4f49ac370ec34c4263024ab94702831dc7bc74a8"
+repo-rev = "53f1fa00"
 repo-url = "https://github.com/madsuite-org/MadNLP.jl.git"
 uuid = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
 version = "0.11.0"
@@ -625,8 +625,8 @@ version = "0.11.0"
 
 [[deps.MadNLPGPU]]
 deps = ["AMD", "Adapt", "GPUArraysCore", "KernelAbstractions", "LinearAlgebra", "MadNLP", "Metis", "PrecompileTools", "SparseArrays"]
-git-tree-sha1 = "85fee7c786051e63ea341353be3b27f192361079"
-repo-rev = "dd950f00"
+git-tree-sha1 = "5cdddb44ec0d9490a82f8e40d4f6640835293caa"
+repo-rev = "53f1fa00"
 repo-subdir = "lib/MadNLPGPU"
 repo-url = "https://github.com/madsuite-org/MadNLP.jl.git"
 uuid = "d72a61cc-809d-412f-99be-fd81f4b8a598"

@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-__version__ = "0.10.1"
+__version__ = "0.10.2"
 
 __all__ = ["solve", "Result", "EmpowerError", "install_dir", "version"]
 

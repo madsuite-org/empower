@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.10.2
+
+- Newer dependencies: ExaModelsPower 0.4.7 and MadNLP master (53f1fa00), with more of the solve path precompiled.
+
 ## v0.10.1
 
 - `--start=SOLUTION.m` (and `start=` in Python): start from the bus voltages and generator dispatch of a solved case of the same network, with ExaModelsPower 0.4.6's `start = :case` (on the CPU, the model library's new `start` writer).

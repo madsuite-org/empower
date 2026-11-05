@@ -57,7 +57,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.10.1"
+#define VERSION "0.10.2"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
