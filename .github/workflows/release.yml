@@ -5,9 +5,9 @@ on:
     tags: ["v*"]
     branches: [main]
     # Documentation alone builds nothing (tags are built whatever they change).
-    paths-ignore: ["**.md", CITATION.bib, LICENSE]
+    paths-ignore: ["**.md", CITATION.bib, LICENSE, .github/workflows/pages.yml]
   pull_request:
-    paths-ignore: ["**.md", CITATION.bib, LICENSE]
+    paths-ignore: ["**.md", CITATION.bib, LICENSE, .github/workflows/pages.yml]
   workflow_dispatch:
 
 # Read-only unless a job asks for more.
