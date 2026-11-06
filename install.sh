@@ -335,10 +335,16 @@ main() {
     # find_hsl: an HSL library already on this machine, in the places the dynamic
     # loader and package managers put them; prints the first one found.
     find_hsl() {
+        # The same directories as system_hsl in driver/empower.c.
         for n in libhsl libcoinhsl; do
-            for d in /usr/local/lib /usr/local/lib64 /opt/homebrew/lib /usr/lib /usr/lib64 \
-                     $(printf '%s' "${LD_LIBRARY_PATH:-}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" | tr ':' ' '); do
-                [ -f "$d/$n.$ext" ] && { printf '%s\n' "$d/$n.$ext"; return 0; }
+            for d in $(printf '%s' "${LD_LIBRARY_PATH:-}:${DYLD_LIBRARY_PATH:-}" | tr ':' ' ') \
+                     ${CONDA_PREFIX:+"$CONDA_PREFIX/lib"} "$HOME/.local/lib" \
+                     /usr/local/lib /usr/local/lib64 /opt/homebrew/lib /usr/lib /usr/lib64 \
+                     /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu; do
+                # libhsl.so, or only a versioned libhsl.so.2 or libhsl.2.dylib
+                for f in "$d/$n.$ext" "$d/$n.$ext".* "$d/$n".*."$ext"; do
+                    [ -f "$f" ] && { printf '%s\n' "$f"; return 0; }
+                done
             done
             if [ "$os" = Linux ] && command -v ldconfig >/dev/null; then
                 p=$(ldconfig -p 2>/dev/null | awk -v n="$n.so" '$1 == n {print $NF; exit}')

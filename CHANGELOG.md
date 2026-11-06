@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.10.3
+
+- HSL search: `empower hsl`, the installer and `empower` now look in the same places: `LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`, `$CONDA_PREFIX/lib`, `~/.local/lib` and the standard library directories, multiarch ones included, and also find a library with only a versioned name (`libhsl.so.2`).
+
 ## v0.10.2
 
 - Newer dependencies: ExaModelsPower 0.4.7 and MadNLP master (53f1fa00), with more of the solve path precompiled.

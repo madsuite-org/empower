@@ -57,7 +57,7 @@
 extern char **environ;
 #endif
 
-#define VERSION "0.10.2"
+#define VERSION "0.10.3"
 #define MA27_URL "https://www.hsl.rl.ac.uk/download/MA27/1.0.0/a/"
 /* Without HSL, Ipopt's linear solver is MUMPS; the same words as the installer's. */
 #define NO_HSL_WARNING \
@@ -598,6 +598,16 @@ static char *opts[MAXOPTS];
 static int no_hsl = 0;   /* MUMPS because no HSL library is installed */
 static int hsl_system = 0;   /* the HSL library was found on this machine, not installed */
 
+typedef struct {
+    char **v;
+    int n, cap;
+} List;
+
+static void push(List *l, const char *s) {
+    if (l->n == l->cap) l->v = xrealloc(l->v, (l->cap = l->cap ? 2 * l->cap : 16) * sizeof(char *));
+    l->v[l->n++] = strdup(s);
+}
+
 /* An HSL library in a standard location (HSL's libHSL, Coin-HSL), for when none is
  * installed or given: the first that exists. */
 static const char *system_hsl(void) {
@@ -605,19 +615,54 @@ static const char *system_hsl(void) {
     return NULL;
 #else
 #ifdef __APPLE__
-    static const char *dirs[] = {"/usr/local/lib", "/opt/homebrew/lib", NULL};
     const char *ext = "dylib";
 #else
-    static const char *dirs[] = {"/usr/local/lib", "/usr/local/lib64", "/usr/lib", "/usr/lib64",
-                                 "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", NULL};
     const char *ext = "so";
 #endif
-    static char path[1024];
+    /* The same directories as find_hsl in install.sh. */
+    static const char *fixed[] = {"/usr/local/lib", "/usr/local/lib64", "/opt/homebrew/lib", "/usr/lib",
+                                  "/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"};
+    List dirs = {0};
+    const char *vars[] = {"LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"};
+    for (int v = 0; v < 2; v++) {
+        const char *val = getenv(vars[v]);
+        if (!val) continue;
+        char *copy = strdup(val);
+        for (char *d = strtok(copy, ":"); d; d = strtok(NULL, ":")) push(&dirs, d);
+        free(copy);
+    }
+    char buf[4200];
+    if (getenv("CONDA_PREFIX")) {
+        snprintf(buf, sizeof buf, "%s/lib", getenv("CONDA_PREFIX"));
+        push(&dirs, buf);
+    }
+    if (getenv("HOME")) {
+        snprintf(buf, sizeof buf, "%s/.local/lib", getenv("HOME"));
+        push(&dirs, buf);
+    }
+    for (size_t k = 0; k < sizeof fixed / sizeof *fixed; k++) push(&dirs, fixed[k]);
+
+    static char path[8400];
     const char *names[] = {"libhsl", "libcoinhsl"};
     for (int k = 0; k < 2; k++)
-        for (int d = 0; dirs[d]; d++) {
-            snprintf(path, sizeof path, "%s/%s.%s", dirs[d], names[k], ext);
+        for (int d = 0; d < dirs.n; d++) {
+            snprintf(path, sizeof path, "%s/%s.%s", dirs.v[d], names[k], ext);
             if (access(path, R_OK) == 0) return path;
+            /* only a versioned library: libhsl.so.2, libhsl.2.dylib */
+            DIR *dir = opendir(dirs.v[d]);
+            if (!dir) continue;
+            size_t L = strlen(names[k]), E = strlen(ext);
+            int found = 0;
+            for (struct dirent *e; !found && (e = readdir(dir));) {
+                const char *f = e->d_name;
+                size_t F = strlen(f);
+                if (strncmp(f, names[k], L) || f[L] != '.') continue;
+                found = (!strncmp(f + L + 1, ext, E) && f[L + 1 + E] == '.') ||
+                        (F > E && !strcmp(f + F - E, ext) && f[F - E - 1] == '.');
+                if (found) snprintf(path, sizeof path, "%s/%s", dirs.v[d], f);
+            }
+            closedir(dir);
+            if (found && access(path, R_OK) == 0) return path;
         }
     return NULL;
 #endif
@@ -659,16 +704,6 @@ static void parse_options(const char *spec) {
 }
 
 /* ------------------------------------------------------------------ cases */
-
-typedef struct {
-    char **v;
-    int n, cap;
-} List;
-
-static void push(List *l, const char *s) {
-    if (l->n == l->cap) l->v = xrealloc(l->v, (l->cap = l->cap ? 2 * l->cap : 16) * sizeof(char *));
-    l->v[l->n++] = strdup(s);
-}
 
 /* PGLib-OPF names carry the bus count (pglib_opf_case2000_goc): smallest first. */
 static long bus_count(const char *path) {
@@ -1633,8 +1668,8 @@ static const char *usage =
     "               solved case of the same network (such as <case>/solution.m); one case\n"
     "  --hsl-lib    HSL library providing MA27 (and MA57, MA86, MA97 if it has them),\n"
     "               passed to Ipopt's hsllib option; default <install>/hsl, or\n"
-    "               $EMPOWER_HSL_LIB, or libhsl/libcoinhsl in /usr/local/lib and other\n"
-    "               standard library directories. MA27 is the linear solver unless --options sets\n"
+    "               $EMPOWER_HSL_LIB, or libhsl/libcoinhsl on LD_LIBRARY_PATH, in $CONDA_PREFIX/lib,\n"
+    "               ~/.local/lib or the standard library directories. MA27 is the linear solver unless --options sets\n"
     "               linear_solver; without HSL it is MUMPS, which is slower for OPF\n"
     "               and not for benchmarking (empower hsl adds MA27)\n"
     "  --ipopt-lib  Ipopt shared library, 3.14 or newer (default <install>/ipopt, or\n"
